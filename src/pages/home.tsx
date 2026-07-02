@@ -34,7 +34,7 @@ import { HomeProfileCard } from '@/components/home/home-profile-card'
 import { ProxyTunCard } from '@/components/home/proxy-tun-card'
 import { useProfiles } from '@/hooks/use-profiles'
 import { useVerge } from '@/hooks/use-verge'
-import { entry_lightweight_mode, importProfile, openWebUrl, patchVergeConfig } from '@/services/cmds'
+import { entry_lightweight_mode, getProfiles, importProfile, openWebUrl, patchProfilesConfig, patchVergeConfig } from '@/services/cmds'
 
 const LazyTestCard = lazy(() =>
   import('@/components/home/test-card').then((module) => ({
@@ -241,6 +241,16 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       const clashUrl = subUrl.includes('?') ? `${subUrl}&flag=verge` : `${subUrl}?flag=verge`
       await importProfile(clashUrl, { with_proxy: false })
       await mutateProfiles()
+      // 自动激活刚导入的订阅配置
+      const profiles = await getProfiles()
+      const items = profiles.items ?? []
+      if (items.length > 0) {
+        const lastItem = items[items.length - 1]
+        if (lastItem?.uid) {
+          await patchProfilesConfig({ current: lastItem.uid })
+          await mutateProfiles()
+        }
+      }
       await patchVergeConfig({ enable_system_proxy: true })
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')
       onSuccess()
