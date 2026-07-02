@@ -99,17 +99,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 编译 Mac 版 (Apple Silicon)
-        run: pnpm tauri build --target aarch64-apple-darwin --bundles app
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: 打包为 dmg (Apple Silicon)
-        run: |
-          APP="target/aarch64-apple-darwin/release/bundle/macos/Clash Verge.app"
-          DMG="彩虹云_aarch64.dmg"
-          hdiutil create -volname "彩虹云" -srcfolder "$APP" -ov -format UDZO "$DMG"
 
       - name: 下载 mihomo 核心 (Intel)
         run: node scripts/prebuild.mjs x86_64-apple-darwin
@@ -117,25 +111,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 编译 Mac 版 (Intel)
-        run: pnpm tauri build --target x86_64-apple-darwin --bundles app
+        run: pnpm tauri build --target x86_64-apple-darwin --bundles dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: 打包为 dmg (Intel)
-        run: |
-          APP="target/x86_64-apple-darwin/release/bundle/macos/Clash Verge.app"
-          DMG="彩虹云_x86_64.dmg"
-          hdiutil create -volname "彩虹云" -srcfolder "$APP" -ov -format UDZO "$DMG"
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
           name: 彩虹云-Mac
           path: |
-            彩虹云_aarch64.dmg
-            彩虹云_x86_64.dmg
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           retention-days: 30
 
       - name: 发布 Release（打 tag 时自动发布）
@@ -143,6 +131,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            彩虹云_aarch64.dmg
-            彩虹云_x86_64.dmg
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           name: 彩虹云 ${{ github.ref_name }}
