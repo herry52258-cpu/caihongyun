@@ -345,18 +345,11 @@ const Layout = () => {
                   justifyContent: 'space-between',
                 }}
               >
-                <SvgIcon
-                  component={isDark ? iconDark : iconLight}
-                  style={{
-                    height: '36px',
-                    width: '36px',
-                    marginTop: '-3px',
-                    marginRight: '5px',
-                    marginLeft: '-3px',
-                  }}
-                  inheritViewBox
-                />
-                <LogoSvg fill={isDark ? 'white' : 'black'} />
+                {(() => {
+                  const IconComponent = isDark ? iconDark : iconLight
+                  return <IconComponent style={{ height: '36px', width: '36px', marginTop: '-3px', marginRight: '5px', marginLeft: '-3px' }} />
+                })()}
+                <span style={{ fontSize: '18px', fontWeight: 700, color: isDark ? 'white' : '#1a1a2e', letterSpacing: '1px', background: 'linear-gradient(135deg, #e040fb, #7c4dff, #2196f3)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: '27px' }}>彩虹云</span>
               </div>
               <UpdateButton className="the-newbtn" />
             </div>

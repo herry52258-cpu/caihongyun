@@ -10,6 +10,7 @@ import { MihomoWebSocket } from 'tauri-plugin-mihomo-api'
 
 import { BaseErrorBoundary } from './components/base'
 import { router } from './pages/_routers'
+import { getProfiles, importProfile, patchProfilesConfig } from './services/cmds'
 import { AppDataProvider } from './providers/app-data-provider'
 import { WindowProvider } from './providers/window'
 import { FALLBACK_LANGUAGE, initializeLanguage } from './services/i18n'
@@ -64,8 +65,22 @@ const initializeApp = (initialThemeMode: 'light' | 'dark') => {
   )
 }
 
+// 彩虹云内置订阅 - 首次启动自动导入
+const CAIHONGYUN_SUB_URL = 'https://13141069.xyz/api/v1/client/subscribe?token='
+const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
+
+const autoInitSubscription = async () => {
+  if (!localStorage.getItem(CAIHONGYUN_INIT_KEY)) {
+    // 未登录，跳转到登录页
+    if (!window.location.hash.includes('/login')) {
+      window.location.hash = '/login'
+    }
+  }
+}
+
 const bootstrap = async () => {
   const { initialThemeMode } = await preloadAppData()
+  await autoInitSubscription()
   initializeApp(initialThemeMode)
 }
 

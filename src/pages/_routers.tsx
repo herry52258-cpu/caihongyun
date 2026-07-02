@@ -21,6 +21,7 @@ import { ensureLanguageSections } from '@/services/i18n'
 
 import Layout from './_layout'
 import HomePage from './home'
+import LoginPage from './login'
 
 const waitForWarmupIdle = (signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -171,6 +172,10 @@ export const preloadNavigationRoutes = async (signal: AbortSignal) => {
 }
 
 export const router = createBrowserRouter([
+  {
+    path: '/login',
+    Component: LoginPage,
+  },
   {
     path: '/',
     Component: Layout,
