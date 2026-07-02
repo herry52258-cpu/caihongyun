@@ -2,14 +2,19 @@ import {
   DnsOutlined,
   HelpOutlineRounded,
   HistoryEduOutlined,
+  LogoutOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
   RouterOutlined,
   SettingsOutlined,
   SpeedOutlined,
+  StorefrontOutlined,
 } from '@mui/icons-material'
 import {
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -302,6 +307,21 @@ const HomePage = () => {
   const { verge } = useVerge()
   const { current, mutateProfiles } = useProfiles()
   const [loggedIn, setLoggedIn] = useState(!!localStorage.getItem(CAIHONGYUN_INIT_KEY))
+  const proxyEnabled = verge?.enable_system_proxy ?? false
+
+  const handleToggleProxy = async () => {
+    await patchVergeConfig({ enable_system_proxy: !proxyEnabled })
+  }
+
+  const handleLogout = async () => {
+    await patchVergeConfig({ enable_system_proxy: false })
+    localStorage.removeItem(CAIHONGYUN_INIT_KEY)
+    setLoggedIn(false)
+  }
+
+  const handleOpenDashboard = () => {
+    openWebUrl('https://13141069.xyz/#/dashboard')
+  }
 
   // 设置弹窗的状态
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -459,21 +479,42 @@ const HomePage = () => {
       title={t('home.page.title')}
       contentStyle={{ padding: 2 }}
       header={
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          <Tooltip title={t('home.page.tooltips.lightweightMode')} arrow>
-            <IconButton
-              onClick={async () => await entry_lightweight_mode()}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          {/* 暂停/恢复代理 */}
+          <Tooltip title={proxyEnabled ? '暂停代理（使用软路由）' : '开启代理'} arrow>
+            <Chip
+              icon={proxyEnabled ? <PauseCircleOutlined fontSize="small" /> : <PlayCircleOutlined fontSize="small" />}
+              label={proxyEnabled ? '已连接' : '已暂停'}
               size="small"
-              color="inherit"
-            >
-              <HistoryEduOutlined />
+              onClick={handleToggleProxy}
+              sx={{
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: 12,
+                bgcolor: proxyEnabled ? 'rgba(0,200,83,0.15)' : 'rgba(255,255,255,0.08)',
+                color: proxyEnabled ? '#00c853' : 'text.secondary',
+                border: '1px solid',
+                borderColor: proxyEnabled ? 'rgba(0,200,83,0.4)' : 'rgba(255,255,255,0.15)',
+                '& .MuiChip-icon': { color: 'inherit' },
+                '&:hover': { opacity: 0.8 },
+              }}
+            />
+          </Tooltip>
+
+          {/* 我的套餐 */}
+          <Tooltip title="我的套餐 / 续费" arrow>
+            <IconButton onClick={handleOpenDashboard} size="small" color="inherit">
+              <StorefrontOutlined />
             </IconButton>
           </Tooltip>
-          <Tooltip title={t('home.page.tooltips.manual')} arrow>
-            <IconButton onClick={toGithubDoc} size="small" color="inherit">
-              <HelpOutlineRounded />
+
+          {/* 切换账号 */}
+          <Tooltip title="退出登录 / 切换账号" arrow>
+            <IconButton onClick={handleLogout} size="small" color="inherit">
+              <LogoutOutlined />
             </IconButton>
           </Tooltip>
+
           <Tooltip title={t('home.page.tooltips.settings')} arrow>
             <IconButton onClick={openSettings} size="small" color="inherit">
               <SettingsOutlined />
