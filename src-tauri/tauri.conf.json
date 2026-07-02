@@ -11,9 +11,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources"],
+    "resources": [
+      "resources"
+    ],
     "publisher": "彩虹云",
-    "externalBin": ["sidecar/verge-mihomo", "sidecar/verge-mihomo-alpha"],
+    "externalBin": [
+      "sidecar/verge-mihomo",
+      "sidecar/verge-mihomo-alpha"
+    ],
     "copyright": "GNU General Public License v3.0",
     "category": "DeveloperTool",
     "shortDescription": "彩虹云",
@@ -30,7 +35,7 @@
   "identifier": "xyz.caihongyun.app",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyOEMyRjBCQkVGOUJEREYKUldUZnZmbStDeStNMHU5Mmo1N24xQXZwSVRYbXA2NUpzZE5oVzlqeS9Bc0t6RVV4MmtwVjBZaHgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2M0VDRDdBOTM4NkJDQkEKUldTNnZJYVRlczArZHZUaVJFUFA2dENyV3FwS0JiT2hoY2lJNy85QmhkZ3BjVWNvWi9xcDZaL3YK",
       "endpoints": [
         "https://update.hwdns.net/https://github.com/clash-verge-rev/clash-verge-rev/releases/download/updater/update-proxy.json",
         "https://gh-proxy.org/https://github.com/clash-verge-rev/clash-verge-rev/releases/download/updater/update-proxy.json",
@@ -42,17 +47,25 @@
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["clash", "clash-verge"]
+        "schemes": [
+          "clash",
+          "clash-verge"
+        ]
       }
     }
   },
   "app": {
     "security": {
-      "capabilities": ["desktop-capability", "migrated"],
+      "capabilities": [
+        "desktop-capability",
+        "migrated"
+      ],
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"],
+          "allow": [
+            "**"
+          ],
           "requireLiteralLeadingDot": false
         }
       },
