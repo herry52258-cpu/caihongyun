@@ -8,6 +8,8 @@ on:
 
 jobs:
   build-windows:
+    permissions:
+      contents: write
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +68,8 @@ jobs:
           name: 彩虹云 ${{ github.ref_name }}
 
   build-mac:
+    permissions:
+      contents: write
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
