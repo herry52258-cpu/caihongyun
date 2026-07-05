@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { importProfile } from '@/services/cmds'
 
-const API_BASE = 'https://13141069.xyz/api/v1'
+const API_BASE = 'https://caihonglu.com/api/v1'
 
 export default function LoginPage() {
   const navigate = useNavigate()
