@@ -335,6 +335,7 @@ const Layout = () => {
         {customTitlebar}
 
         <div className="layout-content">
+          {pathname !== '/' && (
           <div className="layout-content__left">
             <div className="the-logo" data-tauri-drag-region="false">
               <div
@@ -470,6 +471,7 @@ const Layout = () => {
               <LayoutTraffic />
             </div>
           </div>
+          )}
 
           <div className="layout-content__right">
             <div className="the-bar"></div>
