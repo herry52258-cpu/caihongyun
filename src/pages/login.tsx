@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { importProfile } from '@/services/cmds'
 
-const API_BASE = 'https://caihonglu.com/api/v1'
+const API_BASE = 'https://my.caihongmao.org/api/v1'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -78,8 +78,8 @@ export default function LoginPage() {
       }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>🌈</div>
-          <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>彩虹云</h1>
+          <img src="https://caihongmao.org/logo-cat.svg" width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
+          <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>彩虹猫</h1>
           <p style={{ color: 'rgba(255,255,255,0.5)', margin: '6px 0 0', fontSize: 13 }}>
             安全自由，专属LGBT社群
           </p>
@@ -148,7 +148,7 @@ export default function LoginPage() {
 
           <div style={{ textAlign: 'center', marginTop: 8 }}>
             <a
-              href="https://13141069.xyz/#/register"
+              href="https://my.caihongmao.org/#/register"
               target="_blank"
               rel="noreferrer"
               style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textDecoration: 'none' }}

@@ -214,7 +214,7 @@ const HomeSettingsDialog = ({
 }
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
-const API_BASE = 'https://13141069.xyz/api/v1'
+const API_BASE = 'https://my.caihongmao.org/api/v1'
 
 const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
   const [email, setEmail] = useState('')
@@ -271,7 +271,7 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       <DialogContent sx={{ p: 4 }}>
         <Box sx={{ textAlign: 'center', mb: 3 }}>
           <Box sx={{ fontSize: 48 }}>🌈</Box>
-          <Box sx={{ color: '#fff', fontSize: 22, fontWeight: 700, mt: 1 }}>彩虹云</Box>
+          <Box sx={{ color: '#fff', fontSize: 22, fontWeight: 700, mt: 1 }}>彩虹猫</Box>
           <Box sx={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, mt: 0.5 }}>安全自由，专属LGBT社群</Box>
         </Box>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -287,11 +287,11 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
             {loading ? '连接中...' : '登录并连接'}
           </button>
           <Box sx={{ textAlign: 'center', mt: 1, display: 'flex', justifyContent: 'space-between', px: 0.5 }}>
-            <a href="https://13141069.xyz/#/register" target="_blank" rel="noreferrer"
+            <a href="https://my.caihongmao.org/#/register" target="_blank" rel="noreferrer"
               style={{ color: '#b388ff', fontSize: 13, textDecoration: 'none', fontWeight: 600 }}>
               ✨ 免费注册
             </a>
-            <a href="https://13141069.xyz/#/forget" target="_blank" rel="noreferrer"
+            <a href="https://my.caihongmao.org/#/forget" target="_blank" rel="noreferrer"
               style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textDecoration: 'none' }}>
               忘记密码
             </a>
@@ -320,7 +320,7 @@ const HomePage = () => {
   }
 
   const handleOpenDashboard = () => {
-    openWebUrl('https://13141069.xyz/#/dashboard')
+    openWebUrl('https://my.caihongmao.org/#/dashboard')
   }
 
   // 设置弹窗的状态
