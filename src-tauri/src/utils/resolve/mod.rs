@@ -200,6 +200,13 @@ pub(super) async fn init_core_manager() {
 }
 
 pub(super) async fn init_system_proxy() {
+    // 启动时强制断开：用户必须手动点"连接"才联网。
+    // 避免误开 app 就自动联网，也降低"卸载/强杀后残留系统代理导致断网"的风险。
+    Config::verge().await.edit_draft(|d| {
+        d.enable_system_proxy = Some(false);
+        d.enable_tun_mode = Some(false);
+    });
+    Config::verge().await.apply();
     logging_error!(Type::Setup, sysopt::Sysopt::global().update_sysproxy().await);
 }
 

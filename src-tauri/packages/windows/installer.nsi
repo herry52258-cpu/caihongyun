@@ -1071,6 +1071,16 @@ Section Uninstall
   !insertmacro CheckAllVergeProcesses
   !insertmacro RemoveVergeService
 
+  ; ---- 彩虹猫：重置系统代理，避免卸载后残留代理导致全网打不开 ----
+  ; 若用户卸载时 app 仍开着系统代理（127.0.0.1:端口），进程被杀后代理服务器消失，
+  ; Windows 仍指向该代理 -> 所有网站无法访问。这里强制关闭系统代理并立即刷新生效。
+  DetailPrint "Resetting system proxy to avoid no-internet after uninstall"
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyEnable" 0
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyServer"
+  ; INTERNET_OPTION_SETTINGS_CHANGED=39, INTERNET_OPTION_REFRESH=37
+  System::Call 'wininet::InternetSetOptionW(i 0, i 39, i 0, i 0)'
+  System::Call 'wininet::InternetSetOptionW(i 0, i 37, i 0, i 0)'
+
   ; Remove cached window state files
   DetailPrint "Removing window-state.json / .window-state.json"
   SetShellVarContext current

@@ -146,7 +146,7 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
           await mutateProfiles()
         }
       }
-      await patchVergeConfig({ enable_system_proxy: true })
+      // 不自动连接：登录后停留在断开状态，由用户手动点"连接"
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')
       localStorage.setItem('caihongyun_email', email)
       onSuccess()
