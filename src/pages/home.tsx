@@ -9,6 +9,7 @@ import {
   MenuItem,
 } from '@mui/material'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 import { useCurrentProxy } from '@/hooks/use-current-proxy'
@@ -692,6 +693,185 @@ const PurchaseDialog = ({
   )
 }
 
+// ---------- 邀请注册（推广返利） ----------
+const InviteDialog = ({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) => {
+  const [code, setCode] = useState('')
+  const [invited, setInvited] = useState(0)
+  const [rate, setRate] = useState(0)
+  const [commission, setCommission] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [noAuth, setNoAuth] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setCopied(false)
+    const token = localStorage.getItem(AUTH_KEY)
+    if (!token) {
+      setNoAuth(true)
+      return
+    }
+    setNoAuth(false)
+    setLoading(true)
+    void (async () => {
+      try {
+        const load = async () => {
+          const r = await fetch(`${API_BASE}/user/invite/fetch`, {
+            headers: authHeaders(),
+          })
+          return r.json()
+        }
+        let j = await load()
+        let codes = j.data?.codes || []
+        if (codes.length === 0) {
+          // 没有邀请码则先生成一个
+          await fetch(`${API_BASE}/user/invite/save`, { headers: authHeaders() })
+          j = await load()
+          codes = j.data?.codes || []
+        }
+        setCode(codes[0]?.code || '')
+        const stat = j.data?.stat || []
+        setInvited(Number(stat[0] || 0))
+        setRate(Number(stat[3] || 0))
+        setCommission(Number(stat[4] || 0))
+      } catch {
+        // 忽略
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [open])
+
+  const link = code ? `${PANEL}/#/register?code=${code}` : ''
+
+  const copy = async () => {
+    if (!link) return
+    try {
+      await writeText(link)
+    } catch {
+      try {
+        await navigator.clipboard.writeText(link)
+      } catch {
+        // 忽略
+      }
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xs"
+      fullWidth
+      sx={{
+        '& .MuiPaper-root': {
+          borderRadius: 3,
+          background: 'linear-gradient(135deg,#1a1a2e,#16213e)',
+          color: '#fff',
+        },
+      }}
+    >
+      <DialogTitle sx={{ fontWeight: 800 }}>🎁 邀请好友 · 赚返利</DialogTitle>
+      <DialogContent sx={{ pb: 3 }}>
+        {noAuth ? (
+          <div style={{ textAlign: 'center', padding: '16px 4px', color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.8 }}>
+            旧版本升级需要重新登录一次。
+            <br />
+            请从右上角菜单「退出登录」后重新登录，再来邀请。
+          </div>
+        ) : loading ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.6)', padding: 24 }}>
+            加载中…
+          </div>
+        ) : (
+          <>
+            {/* 数据 */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              {[
+                { label: '已邀请', value: `${invited} 人` },
+                { label: '返利比例', value: `${rate}%` },
+                { label: '可用佣金', value: `¥${(commission / 100).toFixed(2)}` },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  style={{
+                    flex: 1,
+                    textAlign: 'center',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    padding: '12px 4px',
+                  }}
+                >
+                  <div style={{ fontSize: 17, fontWeight: 800, color: '#e0b3ff' }}>{s.value}</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 8 }}>
+              你的专属邀请链接：
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'rgba(255,255,255,0.07)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 12,
+                padding: '10px 12px',
+              }}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: '#fff',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {link || '生成中…'}
+              </span>
+              <button
+                onClick={copy}
+                disabled={!link}
+                style={{
+                  border: 'none',
+                  borderRadius: 9,
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: '#fff',
+                  background: copied ? '#2fbf71' : 'linear-gradient(135deg,#e040fb,#7c4dff)',
+                  cursor: link ? 'pointer' : 'not-allowed',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {copied ? '已复制' : '复制'}
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.5)', marginTop: 14, lineHeight: 1.7 }}>
+              把链接发给好友，好友通过它注册并购买，你可获得 {rate || 10}% 返利，佣金可提现或抵扣续费。
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ---------- 主页（一键连接） ----------
 const HomePage = () => {
   const [loggedIn, setLoggedIn] = useState(
@@ -705,6 +885,7 @@ const HomePage = () => {
   const [busy, setBusy] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [purchaseOpen, setPurchaseOpen] = useState(false)
+  const [inviteOpen, setInviteOpen] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -873,6 +1054,14 @@ const HomePage = () => {
           slotProps={{ paper: { sx: { bgcolor: '#1a1a2e', color: '#fff', minWidth: 180 } } }}
         >
           <MenuItem onClick={openPurchase}>🛒 购买 / 升级套餐</MenuItem>
+          <MenuItem
+            onClick={() => {
+              setMenuAnchor(null)
+              setInviteOpen(true)
+            }}
+          >
+            🎁 邀请好友返利
+          </MenuItem>
           <MenuItem onClick={handleRefreshSub}>
             {refreshing ? '⏳ 刷新中...' : '🔄 刷新订阅'}
           </MenuItem>
@@ -1061,6 +1250,23 @@ const HomePage = () => {
         >
           🚀 购买 / 升级套餐
         </button>
+        <button
+          onClick={() => setInviteOpen(true)}
+          style={{
+            width: '100%',
+            marginTop: 10,
+            padding: 12,
+            borderRadius: 14,
+            border: '1px solid rgba(255,255,255,0.14)',
+            background: 'rgba(255,255,255,0.05)',
+            color: '#e0b3ff',
+            fontSize: 14.5,
+            fontWeight: 700,
+            cursor: 'pointer',
+          }}
+        >
+          🎁 邀请好友 · 赚返利
+        </button>
       </div>
 
       <NodePicker
@@ -1075,6 +1281,8 @@ const HomePage = () => {
         open={purchaseOpen}
         onClose={() => setPurchaseOpen(false)}
       />
+
+      <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
     </div>
   )
 }
