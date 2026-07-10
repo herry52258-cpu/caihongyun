@@ -1,8 +1,41 @@
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { importProfile } from '@/services/cmds'
+import { importProfile, openWebUrl } from '@/services/cmds'
 
 const API_BASE = 'https://my.caihongmao.org/api/v1'
+const PANEL = 'https://my.caihongmao.org'
+
+// 在应用内 WebView 窗口打开面板（提权运行时系统浏览器会"找不到应用程序"）
+const openPanel = async (hashPath: string) => {
+  const url = `${PANEL}/${hashPath}`
+  const label = `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`
+  try {
+    const existing = await WebviewWindow.getByLabel(label)
+    if (existing) {
+      await existing.setFocus()
+      return
+    }
+    const win = new WebviewWindow(label, {
+      url,
+      title: '彩虹猫',
+      width: 480,
+      height: 800,
+      center: true,
+      resizable: true,
+    })
+    await new Promise<void>((resolve, reject) => {
+      win.once('tauri://created', () => resolve())
+      win.once('tauri://error', (e) => reject(e))
+    })
+  } catch {
+    try {
+      await openWebUrl(url)
+    } catch {
+      // 忽略
+    }
+  }
+}
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -147,14 +180,12 @@ export default function LoginPage() {
           </button>
 
           <div style={{ textAlign: 'center', marginTop: 8 }}>
-            <a
-              href="https://my.caihongmao.org/#/register"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textDecoration: 'none' }}
+            <span
+              onClick={() => void openPanel('#/register')}
+              style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, cursor: 'pointer' }}
             >
               还没有账号？点此注册
-            </a>
+            </span>
           </div>
         </div>
       </div>

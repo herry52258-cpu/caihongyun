@@ -8,6 +8,7 @@ import {
   Menu,
   MenuItem,
 } from '@mui/material'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 import { useCurrentProxy } from '@/hooks/use-current-proxy'
@@ -27,6 +28,38 @@ const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 const API_BASE = 'https://my.caihongmao.org/api/v1'
 const CAT_LOGO = 'https://caihongmao.org/logo-cat.svg'
 const PANEL = 'https://my.caihongmao.org'
+
+// 在应用内 WebView 窗口打开面板（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
+const openPanel = async (hashPath: string) => {
+  const url = `${PANEL}/${hashPath}`
+  const label = `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`
+  try {
+    const existing = await WebviewWindow.getByLabel(label)
+    if (existing) {
+      await existing.setFocus()
+      return
+    }
+    const win = new WebviewWindow(label, {
+      url,
+      title: '彩虹猫',
+      width: 480,
+      height: 800,
+      center: true,
+      resizable: true,
+    })
+    await new Promise<void>((resolve, reject) => {
+      win.once('tauri://created', () => resolve())
+      win.once('tauri://error', (e) => reject(e))
+    })
+  } catch {
+    // 兜底：尝试系统浏览器
+    try {
+      await openWebUrl(url)
+    } catch {
+      // 忽略
+    }
+  }
+}
 
 // ---------- 工具 ----------
 const FLAGS: [string, string][] = [
@@ -214,22 +247,18 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
               padding: '0 4px',
             }}
           >
-            <a
-              href={`${PANEL}/#/register`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: '#b388ff', fontSize: 13, textDecoration: 'none', fontWeight: 600 }}
+            <span
+              onClick={() => void openPanel('#/register')}
+              style={{ color: '#b388ff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
             >
               ✨ 免费注册
-            </a>
-            <a
-              href={`${PANEL}/#/forget`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textDecoration: 'none' }}
+            </span>
+            <span
+              onClick={() => void openPanel('#/forget')}
+              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, cursor: 'pointer' }}
             >
               忘记密码
-            </a>
+            </span>
           </div>
         </div>
       </DialogContent>
@@ -396,7 +425,7 @@ const HomePage = () => {
 
   const openPurchase = useCallback(() => {
     setMenuAnchor(null)
-    openWebUrl(`${PANEL}/#/plan`)
+    void openPanel('#/plan')
   }, [])
 
   if (!loggedIn) {
@@ -487,7 +516,7 @@ const HomePage = () => {
           <MenuItem
             onClick={() => {
               setMenuAnchor(null)
-              openWebUrl(`${PANEL}/#/dashboard`)
+              void openPanel('#/dashboard')
             }}
           >
             🌐 打开后台
