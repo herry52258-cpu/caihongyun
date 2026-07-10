@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -29,10 +29,8 @@ const API_BASE = 'https://my.caihongmao.org/api/v1'
 const CAT_LOGO = 'https://caihongmao.org/logo-cat.svg'
 const PANEL = 'https://my.caihongmao.org'
 
-// 在应用内 WebView 窗口打开面板（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
-const openPanel = async (hashPath: string) => {
-  const url = `${PANEL}/${hashPath}`
-  const label = `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`
+// 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
+const openWindow = async (url: string, label: string, title = '彩虹猫') => {
   try {
     const existing = await WebviewWindow.getByLabel(label)
     if (existing) {
@@ -41,7 +39,7 @@ const openPanel = async (hashPath: string) => {
     }
     const win = new WebviewWindow(label, {
       url,
-      title: '彩虹猫',
+      title,
       width: 480,
       height: 800,
       center: true,
@@ -59,6 +57,64 @@ const openPanel = async (hashPath: string) => {
       // 忽略
     }
   }
+}
+
+const openPanel = (hashPath: string) =>
+  openWindow(
+    `${PANEL}/${hashPath}`,
+    `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`,
+  )
+
+const AUTH_KEY = 'caihongyun_auth'
+const authHeaders = (): Record<string, string> => ({
+  'Content-Type': 'application/json',
+  Authorization: localStorage.getItem(AUTH_KEY) || '',
+})
+
+// 套餐周期 key -> 中文后缀（与后台 OrderSave 旧版字段一致）
+const PERIODS: [string, string][] = [
+  ['month_price', '/月'],
+  ['quarter_price', '/季'],
+  ['half_year_price', '/半年'],
+  ['year_price', '/年'],
+  ['two_year_price', '/2年'],
+  ['three_year_price', '/3年'],
+  ['onetime_price', '/永久'],
+]
+
+type PlanItem = {
+  id: number
+  name: string
+  price: number
+  period: string
+  label: string
+  orig: number | null
+}
+type PayItem = { id: number; name: string }
+
+const yuan = (cents: number): string =>
+  cents % 100 === 0 ? `¥${cents / 100}` : `¥${(cents / 100).toFixed(2)}`
+
+const buildPlans = (data: unknown[]): PlanItem[] => {
+  const out: PlanItem[] = []
+  for (const raw of data || []) {
+    const pl = raw as Record<string, unknown>
+    for (const [key, label] of PERIODS) {
+      const price = pl[key]
+      if (price != null && Number(price) > 0) {
+        const cents = Number(price)
+        out.push({
+          id: Number(pl.id),
+          name: String(pl.name ?? '套餐'),
+          price: cents,
+          period: key,
+          label,
+          orig: key === 'onetime_price' && cents === 99900 ? 199900 : null,
+        })
+      }
+    }
+  }
+  return out
 }
 
 // ---------- 工具 ----------
@@ -121,6 +177,8 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
         setLoading(false)
         return
       }
+      // 保存 auth token，供原生购买页调用后台接口
+      localStorage.setItem(AUTH_KEY, data.data.auth_data)
       const subRes = await fetch(`${API_BASE}/user/getSubscribe`, {
         headers: { Authorization: data.data.auth_data },
       })
@@ -330,6 +388,310 @@ const NodePicker = ({
   </Dialog>
 )
 
+// ---------- 原生购买页 ----------
+const PurchaseDialog = ({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) => {
+  const [plans, setPlans] = useState<PlanItem[]>([])
+  const [payments, setPayments] = useState<PayItem[]>([])
+  const [selected, setSelected] = useState<PlanItem | null>(null)
+  const [payId, setPayId] = useState<number | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [buying, setBuying] = useState(false)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState('')
+  const [noAuth, setNoAuth] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setError('')
+    setDone('')
+    const token = localStorage.getItem(AUTH_KEY)
+    if (!token) {
+      setNoAuth(true)
+      return
+    }
+    setNoAuth(false)
+    setLoading(true)
+    void (async () => {
+      try {
+        const pr = await fetch(`${API_BASE}/user/plan/fetch`, {
+          headers: authHeaders(),
+        })
+        const pj = await pr.json()
+        const list = buildPlans(pj.data || [])
+        setPlans(list)
+        setSelected(
+          list.find((p) => p.period === 'year_price') ||
+            list.find((p) => p.period === 'onetime_price') ||
+            list[0] ||
+            null,
+        )
+        const mr = await fetch(`${API_BASE}/user/order/getPaymentMethod`, {
+          headers: authHeaders(),
+        })
+        const mj = await mr.json()
+        const pays: PayItem[] = (mj.data || []).map((o: Record<string, unknown>) => ({
+          id: Number(o.id),
+          name: String(o.name || '支付'),
+        }))
+        setPayments(pays)
+        setPayId(pays[0]?.id ?? null)
+      } catch {
+        setError('加载套餐失败，请检查网络')
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [open])
+
+  const cancelPending = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/user/order/fetch`, {
+        headers: authHeaders(),
+      })
+      const j = await r.json()
+      for (const o of j.data || []) {
+        if (o.status === 0) {
+          await fetch(`${API_BASE}/user/order/cancel`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ trade_no: o.trade_no }),
+          })
+        }
+      }
+    } catch {
+      // 忽略
+    }
+  }
+
+  const onBuy = async () => {
+    if (!selected || payId == null || buying) return
+    setBuying(true)
+    setError('')
+    setDone('')
+    try {
+      const saveBody = JSON.stringify({
+        plan_id: selected.id,
+        period: selected.period,
+      })
+      let res = await fetch(`${API_BASE}/user/order/save`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: saveBody,
+      })
+      let sj = await res.json()
+      if (!res.ok) {
+        const msg = String(sj.message || '')
+        if (/未付|开通中|pending|unpaid/i.test(msg)) {
+          await cancelPending()
+          res = await fetch(`${API_BASE}/user/order/save`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: saveBody,
+          })
+          sj = await res.json()
+        }
+      }
+      if (!res.ok) {
+        setError(sj.message || '下单失败')
+        return
+      }
+      const tradeNo = String(sj.data ?? '')
+      if (!tradeNo) {
+        setError('下单失败')
+        return
+      }
+      const co = await fetch(`${API_BASE}/user/order/checkout`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ trade_no: tradeNo, method: payId }),
+      })
+      const cj = await co.json()
+      if (!co.ok) {
+        setError(cj.message || '支付发起失败')
+        return
+      }
+      if (cj.type === -1) {
+        setDone('开通成功！可关闭本页')
+        return
+      }
+      const payUrl = cj.data ? String(cj.data) : ''
+      if (!payUrl || payUrl === 'true') {
+        setError('支付发起失败')
+        return
+      }
+      await openWindow(payUrl, 'cashier', '支付')
+      setDone('已打开支付页面，付款完成后关闭即可')
+    } catch {
+      setError('下单出错，请重试')
+    } finally {
+      setBuying(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xs"
+      fullWidth
+      sx={{
+        '& .MuiPaper-root': {
+          borderRadius: 3,
+          background: 'linear-gradient(135deg,#1a1a2e,#16213e)',
+          color: '#fff',
+        },
+      }}
+    >
+      <DialogTitle sx={{ fontWeight: 800 }}>💎 购买 / 升级套餐</DialogTitle>
+      <DialogContent sx={{ pb: 3 }}>
+        {noAuth ? (
+          <div style={{ textAlign: 'center', padding: '16px 4px' }}>
+            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.8 }}>
+              旧版本升级需要重新登录一次。
+              <br />
+              请从右上角菜单「退出登录」后重新登录，再来购买。
+            </div>
+          </div>
+        ) : loading ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.6)', padding: 24 }}>
+            加载套餐中…
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {plans.map((p) => {
+                const active = selected?.period === p.period && selected?.id === p.id
+                return (
+                  <div
+                    key={`${p.id}-${p.period}`}
+                    onClick={() => setSelected(p)}
+                    style={{
+                      border: active
+                        ? '1.5px solid #e040fb'
+                        : '1px solid rgba(255,255,255,0.12)',
+                      background: active
+                        ? 'rgba(224,64,251,0.12)'
+                        : 'rgba(255,255,255,0.04)',
+                      borderRadius: 14,
+                      padding: '13px 16px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>
+                      {p.name}
+                      <span
+                        style={{
+                          color: 'rgba(255,255,255,0.5)',
+                          fontWeight: 400,
+                          fontSize: 13,
+                          marginLeft: 4,
+                        }}
+                      >
+                        {p.label}
+                      </span>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: 19, fontWeight: 800 }}>{yuan(p.price)}</span>
+                      {p.orig && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            color: 'rgba(255,255,255,0.4)',
+                            textDecoration: 'line-through',
+                            fontSize: 13,
+                          }}
+                        >
+                          {yuan(p.orig)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              {plans.length === 0 && (
+                <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 16 }}>
+                  暂无可购买套餐
+                </div>
+              )}
+            </div>
+            {payments.length > 1 && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                {payments.map((pay) => {
+                  const on = payId === pay.id
+                  return (
+                    <div
+                      key={pay.id}
+                      onClick={() => setPayId(pay.id)}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        padding: '10px 0',
+                        borderRadius: 10,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                        fontWeight: 600,
+                        border: on
+                          ? '1.5px solid #7c4dff'
+                          : '1px solid rgba(255,255,255,0.12)',
+                        background: on ? 'rgba(124,77,255,0.15)' : 'transparent',
+                      }}
+                    >
+                      {pay.name}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {error && (
+              <div style={{ color: '#ff6b6b', fontSize: 13, textAlign: 'center', marginTop: 12 }}>
+                {error}
+              </div>
+            )}
+            {done && (
+              <div style={{ color: '#7CFFB2', fontSize: 13, textAlign: 'center', marginTop: 12 }}>
+                {done}
+              </div>
+            )}
+            <button
+              onClick={() => void onBuy()}
+              disabled={buying || !selected}
+              style={{
+                width: '100%',
+                marginTop: 16,
+                padding: 14,
+                borderRadius: 12,
+                border: 'none',
+                background: buying
+                  ? 'rgba(255,255,255,0.2)'
+                  : 'linear-gradient(135deg,#e040fb,#7c4dff)',
+                color: '#fff',
+                fontSize: 16,
+                fontWeight: 800,
+                cursor: buying ? 'wait' : 'pointer',
+              }}
+            >
+              {buying
+                ? '处理中…'
+                : selected
+                  ? `立即开通 · ${yuan(selected.price)} ${selected.label}`
+                  : '请选择套餐'}
+            </button>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ---------- 主页（一键连接） ----------
 const HomePage = () => {
   const [loggedIn, setLoggedIn] = useState(
@@ -342,6 +704,7 @@ const HomePage = () => {
 
   const [busy, setBusy] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [purchaseOpen, setPurchaseOpen] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -425,7 +788,7 @@ const HomePage = () => {
 
   const openPurchase = useCallback(() => {
     setMenuAnchor(null)
-    void openPanel('#/plan')
+    setPurchaseOpen(true)
   }, [])
 
   if (!loggedIn) {
@@ -706,6 +1069,11 @@ const HomePage = () => {
         current={currentNode}
         onSelect={handleSelectNode}
         onClose={() => setPickerOpen(false)}
+      />
+
+      <PurchaseDialog
+        open={purchaseOpen}
+        onClose={() => setPurchaseOpen(false)}
       />
     </div>
   )

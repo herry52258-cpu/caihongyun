@@ -65,6 +65,8 @@ export default function LoginPage() {
         return
       }
       const authToken = data.data.auth_data
+      // 保存 auth token，供原生购买页调用后台接口
+      localStorage.setItem('caihongyun_auth', authToken)
 
       // 获取订阅链接
       const subRes = await fetch(`${API_BASE}/user/getSubscribe`, {
