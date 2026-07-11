@@ -93,6 +93,16 @@ type PlanItem = {
 }
 type PayItem = { id: number; name: string }
 
+// 支付通道单笔限额(分)：支付宝 ¥1-300，微信 ¥1-1000。超限的通道会返回"没有找到符合金额要求的支付通道"
+const PAY_LIMITS: { match: string; max: number }[] = [
+  { match: '支付宝', max: 30000 },
+  { match: '微信', max: 100000 },
+]
+const payMax = (name: string): number => {
+  for (const { match, max } of PAY_LIMITS) if (name.includes(match)) return max
+  return Infinity
+}
+
 const yuan = (cents: number): string =>
   cents % 100 === 0 ? `¥${cents / 100}` : `¥${(cents / 100).toFixed(2)}`
 
@@ -407,6 +417,21 @@ const PurchaseDialog = ({
   const [done, setDone] = useState('')
   const [noAuth, setNoAuth] = useState(false)
 
+  // 按所选套餐金额过滤支付方式(支付宝≤¥300 / 微信≤¥1000)；若全部超限则兜底显示全部
+  const availablePays = useMemo(() => {
+    if (!selected) return payments
+    const ok = payments.filter((p) => selected.price <= payMax(p.name))
+    return ok.length > 0 ? ok : payments
+  }, [payments, selected])
+
+  // 所选支付方式若被过滤掉，自动切到第一个可用的
+  useEffect(() => {
+    if (availablePays.length === 0) return
+    if (!availablePays.some((p) => p.id === payId)) {
+      setPayId(availablePays[0].id)
+    }
+  }, [availablePays, payId])
+
   useEffect(() => {
     if (!open) return
     setError('')
@@ -624,9 +649,9 @@ const PurchaseDialog = ({
                 </div>
               )}
             </div>
-            {payments.length > 1 && (
+            {availablePays.length > 1 && (
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                {payments.map((pay) => {
+                {availablePays.map((pay) => {
                   const on = payId === pay.id
                   return (
                     <div
