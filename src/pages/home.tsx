@@ -27,7 +27,7 @@ import {
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 const API_BASE = 'https://my.caihongmao.org/api/v1'
-const CAT_LOGO = 'https://caihongmao.org/logo-cat.svg'
+const CAT_LOGO = 'https://caihongmao.org/logo-cat-v2.svg'
 const PANEL = 'https://my.caihongmao.org'
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）

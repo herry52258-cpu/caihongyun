@@ -113,7 +113,7 @@ export default function LoginPage() {
       }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <img src="https://caihongmao.org/logo-cat.svg" width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
+          <img src="https://caihongmao.org/logo-cat-v2.svg" width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
           <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>彩虹猫</h1>
           <p style={{ color: 'rgba(255,255,255,0.5)', margin: '6px 0 0', fontSize: 13 }}>
             安全自由，专属LGBT社群
