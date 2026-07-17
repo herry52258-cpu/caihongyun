@@ -3,8 +3,34 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { importProfile, openWebUrl } from '@/services/cmds'
 
-const API_BASE = 'https://my.caihongmao.org/api/v1'
+const APP_VERSION = 'v1.0.14'
+// 登录双通道：先走 Cloudflare 域名，连不上(移动/CF被墙)自动切直连 m.caihongmao.org
+const API_BASES = ['https://my.caihongmao.org/api/v1', 'https://m.caihongmao.org/api/v1']
 const PANEL = 'https://my.caihongmao.org'
+
+// 带超时的 fetch：CF 被墙时挂死，8 秒超时快速回退到下一个通道
+async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = 8000): Promise<Response> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal })
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+// 依次尝试各通道；只有网络层失败(连不上/超时)才切下一个，HTTP 错误码正常返回不重试
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  let lastErr: unknown
+  for (const base of API_BASES) {
+    try {
+      return await fetchWithTimeout(`${base}${path}`, init)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
+}
 
 // 在应用内 WebView 窗口打开面板（提权运行时系统浏览器会"找不到应用程序"）
 const openPanel = async (hashPath: string) => {
@@ -53,7 +79,7 @@ export default function LoginPage() {
     setError('')
     try {
       // 登录获取 token
-      const res = await fetch(`${API_BASE}/passport/auth/login`, {
+      const res = await apiFetch('/passport/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -69,7 +95,7 @@ export default function LoginPage() {
       localStorage.setItem('caihongyun_auth', authToken)
 
       // 获取订阅链接
-      const subRes = await fetch(`${API_BASE}/user/getSubscribe`, {
+      const subRes = await apiFetch('/user/getSubscribe', {
         headers: { Authorization: authToken },
       })
       const subData = await subRes.json()
@@ -188,6 +214,11 @@ export default function LoginPage() {
             >
               还没有账号？点此注册
             </span>
+          </div>
+
+          {/* 版本号：便于用户/客服确认安装的是哪个版本 */}
+          <div style={{ textAlign: 'center', marginTop: 6 }}>
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>{APP_VERSION}</span>
           </div>
         </div>
       </div>
