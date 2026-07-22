@@ -12,6 +12,9 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
+// 猫图打包进 App，不再从 caihongmao.org 远程加载：
+// 该域名走 Cloudflare，未连 VPN 时在国内常被干扰，会导致界面 logo 变成裂图。
+import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { useCurrentProxy } from '@/hooks/use-current-proxy'
 import { useProfiles } from '@/hooks/use-profiles'
 import { useSystemProxyState } from '@/hooks/use-system-proxy-state'
@@ -27,7 +30,6 @@ import {
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 const API_BASE = 'https://my.caihongmao.org/api/v1'
-const CAT_LOGO = 'https://caihongmao.org/logo-cat-v2.svg'
 const PANEL = 'https://my.caihongmao.org'
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）

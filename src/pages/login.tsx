@@ -1,9 +1,12 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+
+// 猫图打包进 App，不再从 caihongmao.org 远程加载（该域名走 Cloudflare，未连 VPN 时国内常被干扰）
+import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
 
-const APP_VERSION = 'v1.0.14'
+const APP_VERSION = 'v1.0.15'
 // 登录双通道：先走 Cloudflare 域名，连不上(移动/CF被墙)自动切直连 m.caihongmao.org
 const API_BASES = ['https://my.caihongmao.org/api/v1', 'https://m.caihongmao.org/api/v1']
 const PANEL = 'https://my.caihongmao.org'
@@ -139,7 +142,7 @@ export default function LoginPage() {
       }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <img src="https://caihongmao.org/logo-cat-v2.svg" width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
+          <img src={CAT_LOGO} width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
           <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>彩虹猫</h1>
           <p style={{ color: 'rgba(255,255,255,0.5)', margin: '6px 0 0', fontSize: 13 }}>
             安全自由，专属LGBT社群
