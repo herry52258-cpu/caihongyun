@@ -205,17 +205,23 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       const clashUrl = subUrl.includes('?')
         ? `${subUrl}&flag=verge`
         : `${subUrl}?flag=verge`
-      await importProfile(clashUrl, { with_proxy: false })
-      await mutateProfiles()
-      // 自动激活刚导入的订阅配置
-      const profiles = await getProfiles()
-      const items = profiles.items ?? []
-      if (items.length > 0) {
-        const lastItem = items[items.length - 1]
-        if (lastItem?.uid) {
-          await patchProfilesConfig({ current: lastItem.uid })
-          await mutateProfiles()
+      // 过期/未开通用户：订阅内容返回 403，导入会失败——但不该拦住登录。
+      // 与 Android 一致：仍算登录成功、进首页，由首页显示到期状态并引导购买。
+      try {
+        await importProfile(clashUrl, { with_proxy: false })
+        await mutateProfiles()
+        // 自动激活刚导入的订阅配置
+        const profiles = await getProfiles()
+        const items = profiles.items ?? []
+        if (items.length > 0) {
+          const lastItem = items[items.length - 1]
+          if (lastItem?.uid) {
+            await patchProfilesConfig({ current: lastItem.uid })
+            await mutateProfiles()
+          }
         }
+      } catch {
+        // 订阅导入失败（多为套餐到期）：不报错，照常进首页引导续费
       }
       // 不自动连接：登录后停留在断开状态，由用户手动点"连接"
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')

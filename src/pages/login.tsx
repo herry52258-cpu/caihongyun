@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router'
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
 
-const APP_VERSION = 'v1.0.15'
+const APP_VERSION = 'v1.0.16'
 // 登录双通道：先走 Cloudflare 域名，连不上(移动/CF被墙)自动切直连 m.caihongmao.org
 const API_BASES = ['https://my.caihongmao.org/api/v1', 'https://m.caihongmao.org/api/v1']
 const PANEL = 'https://my.caihongmao.org'
@@ -109,8 +109,15 @@ export default function LoginPage() {
         return
       }
 
-      // 导入订阅到 Clash 核心
-      await importProfile(subUrl, { with_proxy: false })
+      // 导入订阅到 Clash 核心。
+      // 过期/未开通用户：订阅内容返回 403，importProfile 会失败——但这不该拦住登录。
+      // 与 Android 一致：仍算登录成功、进首页，由首页显示到期状态并引导购买，
+      // 否则用户只看到「网络错误」，会误以为软件坏了。
+      try {
+        await importProfile(subUrl, { with_proxy: false })
+      } catch {
+        // 订阅导入失败（多为套餐到期）：不报错，照常进首页引导续费
+      }
       localStorage.setItem('caihongyun_initialized', '1')
       localStorage.setItem('caihongyun_email', email)
       navigate('/')
