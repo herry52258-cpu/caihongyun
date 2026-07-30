@@ -27,9 +27,9 @@ import {
   patchVergeConfig,
   updateProfile,
 } from '@/services/cmds'
+import { panelApiFetch } from '@/services/panel-api'
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
-const API_BASE = 'https://my.caihongmao.org/api/v1'
 const PANEL = 'https://my.caihongmao.org'
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
@@ -179,7 +179,7 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API_BASE}/passport/auth/login`, {
+      const res = await panelApiFetch(`/passport/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -192,7 +192,7 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       }
       // 保存 auth token，供原生购买页调用后台接口
       localStorage.setItem(AUTH_KEY, data.data.auth_data)
-      const subRes = await fetch(`${API_BASE}/user/getSubscribe`, {
+      const subRes = await panelApiFetch(`/user/getSubscribe`, {
         headers: { Authorization: data.data.auth_data },
       })
       const subData = await subRes.json()
@@ -453,7 +453,7 @@ const PurchaseDialog = ({
     setLoading(true)
     void (async () => {
       try {
-        const pr = await fetch(`${API_BASE}/user/plan/fetch`, {
+        const pr = await panelApiFetch(`/user/plan/fetch`, {
           headers: authHeaders(),
         })
         const pj = await pr.json()
@@ -465,7 +465,7 @@ const PurchaseDialog = ({
             list[0] ||
             null,
         )
-        const mr = await fetch(`${API_BASE}/user/order/getPaymentMethod`, {
+        const mr = await panelApiFetch(`/user/order/getPaymentMethod`, {
           headers: authHeaders(),
         })
         const mj = await mr.json()
@@ -485,13 +485,13 @@ const PurchaseDialog = ({
 
   const cancelPending = async () => {
     try {
-      const r = await fetch(`${API_BASE}/user/order/fetch`, {
+      const r = await panelApiFetch(`/user/order/fetch`, {
         headers: authHeaders(),
       })
       const j = await r.json()
       for (const o of j.data || []) {
         if (o.status === 0) {
-          await fetch(`${API_BASE}/user/order/cancel`, {
+          await panelApiFetch(`/user/order/cancel`, {
             method: 'POST',
             headers: authHeaders(),
             body: JSON.stringify({ trade_no: o.trade_no }),
@@ -513,7 +513,7 @@ const PurchaseDialog = ({
         plan_id: selected.id,
         period: selected.period,
       })
-      let res = await fetch(`${API_BASE}/user/order/save`, {
+      let res = await panelApiFetch(`/user/order/save`, {
         method: 'POST',
         headers: authHeaders(),
         body: saveBody,
@@ -523,7 +523,7 @@ const PurchaseDialog = ({
         const msg = String(sj.message || '')
         if (/未付|开通中|pending|unpaid/i.test(msg)) {
           await cancelPending()
-          res = await fetch(`${API_BASE}/user/order/save`, {
+          res = await panelApiFetch(`/user/order/save`, {
             method: 'POST',
             headers: authHeaders(),
             body: saveBody,
@@ -540,7 +540,7 @@ const PurchaseDialog = ({
         setError('下单失败')
         return
       }
-      const co = await fetch(`${API_BASE}/user/order/checkout`, {
+      const co = await panelApiFetch(`/user/order/checkout`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ trade_no: tradeNo, method: payId }),
@@ -755,7 +755,7 @@ const InviteDialog = ({
     void (async () => {
       try {
         const load = async () => {
-          const r = await fetch(`${API_BASE}/user/invite/fetch`, {
+          const r = await panelApiFetch(`/user/invite/fetch`, {
             headers: authHeaders(),
           })
           return r.json()
@@ -764,7 +764,7 @@ const InviteDialog = ({
         let codes = j.data?.codes || []
         if (codes.length === 0) {
           // 没有邀请码则先生成一个
-          await fetch(`${API_BASE}/user/invite/save`, { headers: authHeaders() })
+          await panelApiFetch(`/user/invite/save`, { headers: authHeaders() })
           j = await load()
           codes = j.data?.codes || []
         }

@@ -5,35 +5,14 @@ import { useNavigate } from 'react-router'
 // 猫图打包进 App，不再从 caihongmao.org 远程加载（该域名走 Cloudflare，未连 VPN 时国内常被干扰）
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
+import { panelApiFetch } from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.16'
-// 登录双通道：先走 Cloudflare 域名，连不上(移动/CF被墙)自动切直连 m.caihongmao.org
-const API_BASES = ['https://my.caihongmao.org/api/v1', 'https://m.caihongmao.org/api/v1']
+const APP_VERSION = 'v1.0.17'
 const PANEL = 'https://my.caihongmao.org'
 
-// 带超时的 fetch：CF 被墙时挂死，8 秒超时快速回退到下一个通道
-async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = 8000): Promise<Response> {
-  const ctrl = new AbortController()
-  const t = setTimeout(() => ctrl.abort(), ms)
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal })
-  } finally {
-    clearTimeout(t)
-  }
-}
-
-// 依次尝试各通道；只有网络层失败(连不上/超时)才切下一个，HTTP 错误码正常返回不重试
-async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  let lastErr: unknown
-  for (const base of API_BASES) {
-    try {
-      return await fetchWithTimeout(`${base}${path}`, init)
-    } catch (e) {
-      lastErr = e
-    }
-  }
-  throw lastErr
-}
+// 登录/API 走共享的双通道请求器：直连 IP:8080 优先(国内秒开)，my.(CF) 兜底。
+// 原兜底 m.caihongmao.org(443) 已被 GFW 按 SNI 掐死，弃用。
+const apiFetch = panelApiFetch
 
 // 在应用内 WebView 窗口打开面板（提权运行时系统浏览器会"找不到应用程序"）
 const openPanel = async (hashPath: string) => {
