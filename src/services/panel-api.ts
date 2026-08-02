@@ -7,6 +7,9 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 // 用 @tauri-apps/plugin-http（Rust reqwest 层）而非浏览器 fetch，才能可靠地打明文 http。
 const API_CHANNELS = [
   'http://5.253.38.67:8080/api/v1',
+  // cdn.caihongmao.org 走 CF、SNI 未被墙（①⑤⑥ 节点靠它连=证明国内能通），已配成完整面板镜像。
+  // my.caihongmao.org 的 SNI 常被 GFW 掐，放最后兜底。
+  'https://cdn.caihongmao.org/api/v1',
   'https://my.caihongmao.org/api/v1',
 ]
 
