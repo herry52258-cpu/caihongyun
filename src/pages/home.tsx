@@ -30,7 +30,7 @@ import {
 import { panelApiFetch } from '@/services/panel-api'
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
-const PANEL = 'https://cdn.caihongmao.org'
+const PANEL = 'https://cdn4.caihongmao.org'
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
 const openWindow = async (url: string, label: string, title = '彩虹猫') => {

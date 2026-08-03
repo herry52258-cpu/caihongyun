@@ -6,11 +6,11 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 // 之前桌面版只用 my.（CF），国内一被墙就一直转圈/续费失败；改为直连优先即可秒开。
 // 用 @tauri-apps/plugin-http（Rust reqwest 层）而非浏览器 fetch，才能可靠地打明文 http。
 const API_CHANNELS = [
-  'http://5.253.38.67:8080/api/v1',
+  'https://cdn4.caihongmao.org/api/v1',
   // cdn.caihongmao.org 走 CF、SNI 未被墙（①⑤⑥ 节点靠它连=证明国内能通），已配成完整面板镜像。
   // my.caihongmao.org 的 SNI 常被 GFW 掐，放最后兜底。
-  'https://cdn.caihongmao.org/api/v1',
-  'https://my.caihongmao.org/api/v1',
+  'https://cdn5.caihongmao.org/api/v1',
+  'https://cdn6.caihongmao.org/api/v1',
 ]
 
 // 带超时的 fetch：某通道连接层挂死时，8 秒超时快速回退下一条
