@@ -9,12 +9,12 @@ const API_CHANNELS = [
   'https://cdn4.caihongmao.org/api/v1',
   // cdn.caihongmao.org 走 CF、SNI 未被墙（①⑤⑥ 节点靠它连=证明国内能通），已配成完整面板镜像。
   // my.caihongmao.org 的 SNI 常被 GFW 掐，放最后兜底。
-  'https://cdn5.caihongmao.org/api/v1',
+  'https://cdn2.caihongmao.org/api/v1',
   'https://cdn6.caihongmao.org/api/v1',
 ]
 
 // 带超时的 fetch：某通道连接层挂死时，8 秒超时快速回退下一条
-async function fetchWithTimeout(url: string, init: RequestInit, ms = 8000): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, ms = 4500): Promise<Response> {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), ms)
   try {
