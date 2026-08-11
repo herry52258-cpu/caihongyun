@@ -26,6 +26,7 @@ import {
   UpdateStateProvider,
 } from './services/states'
 import { disableWebViewShortcuts } from './utils/disable-webview-shortcuts'
+import { checkDesktopUpdate } from './services/desktop-update'
 
 if (!window.ResizeObserver) {
   window.ResizeObserver = ResizeObserver
@@ -82,6 +83,8 @@ const bootstrap = async () => {
   const { initialThemeMode } = await preloadAppData()
   await autoInitSubscription()
   initializeApp(initialThemeMode)
+  // 启动后检查桌面版更新（多通道抗封，不阻塞）
+  setTimeout(() => { checkDesktopUpdate() }, 3000)
 }
 
 bootstrap().catch((error) => {
