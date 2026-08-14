@@ -67,7 +67,7 @@ const initializeApp = (initialThemeMode: 'light' | 'dark') => {
 }
 
 // 彩虹猫内置订阅 - 首次启动自动导入
-const CAIHONGYUN_SUB_URL = 'https://cdn5.caihongmao.org/api/v1/client/subscribe?token='
+const CAIHONGYUN_SUB_URL = 'https://cdn9.caihongmao.org/api/v1/client/subscribe?token='
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 
 const autoInitSubscription = async () => {
