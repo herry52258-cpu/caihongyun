@@ -7,7 +7,7 @@ import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
 import { panelApiFetch } from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.23'
+const APP_VERSION = 'v1.0.24'
 // 面板/注册页用 cdn.caihongmao.org（走CF、SNI未被墙、完整面板镜像）；my. 常被GFW掐
 const PANEL = 'https://p1.lianjieni.com'
 
@@ -208,7 +208,7 @@ export default function LoginPage() {
 
           {/* 版本号：便于用户/客服确认安装的是哪个版本 */}
           <div style={{ textAlign: 'center', marginTop: 6 }}>
-            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>{APP_VERSION}</span>
+            <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, letterSpacing: 0.3 }}>彩虹猫桌面版 {APP_VERSION}</span>
           </div>
         </div>
       </div>
