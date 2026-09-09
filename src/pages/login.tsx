@@ -7,7 +7,7 @@ import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
 import { panelApiFetch } from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.24'
+const APP_VERSION = 'v1.0.25'
 // 面板/注册页用 cdn.caihongmao.org（走CF、SNI未被墙、完整面板镜像）；my. 常被GFW掐
 const PANEL = 'https://p1.lianjieni.com'
 

@@ -69,6 +69,53 @@ const openPanel = (hashPath: string) =>
   )
 
 const AUTH_KEY = 'caihongyun_auth'
+
+// 导入订阅的多通道域名(单条被 GFW 掐 TLS 握手时自动换下一条)。都是同一份订阅,任一成功即可。
+const IMPORT_HOSTS = [
+  'p1.lianjieni.com',
+  'p2.lianjieni.com',
+  'p3.lianjieni.com',
+  'cdn9.caihongmao.org',
+]
+
+// 多通道导入:从 subUrl(形如 https://p1.lianjieni.com/s/TOKEN)提取路径,
+// 依次用各域名 + flag=verge 尝试导入,任一成功即返回;全失败才抛错。
+async function importSubWithFallback(subUrl: string): Promise<void> {
+  const path = subUrl.replace(/^https?:\/\/[^/]+/, '') // /s/TOKEN[?...]
+  let lastErr: unknown
+  for (const host of IMPORT_HOSTS) {
+    const base = `https://${host}${path}`
+    const clashUrl = base.includes('?') ? `${base}&flag=verge` : `${base}?flag=verge`
+    try {
+      await importProfile(clashUrl, { with_proxy: false })
+      return
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr ?? new Error('import failed')
+}
+
+// 登录/连接共用:拿订阅链接 → 多通道导入 → 激活刚导入的配置。
+// 返回 true=成功导入并激活。任一步失败向上抛,由调用方决定是否拦截。
+async function ensureSubscription(auth: string): Promise<boolean> {
+  const subRes = await panelApiFetch(`/user/getSubscribe`, {
+    headers: { Authorization: auth },
+  })
+  const subData = await subRes.json()
+  const subUrl = subData.data?.subscribe_url
+  if (!subUrl) return false
+  await importSubWithFallback(subUrl)
+  const profiles = await getProfiles()
+  const items = profiles.items ?? []
+  if (items.length > 0) {
+    const lastItem = items[items.length - 1]
+    if (lastItem?.uid) {
+      await patchProfilesConfig({ current: lastItem.uid })
+    }
+  }
+  return true
+}
 const authHeaders = (): Record<string, string> => ({
   'Content-Type': 'application/json',
   Authorization: localStorage.getItem(AUTH_KEY) || '',
@@ -192,36 +239,14 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       }
       // 保存 auth token，供原生购买页调用后台接口
       localStorage.setItem(AUTH_KEY, data.data.auth_data)
-      const subRes = await panelApiFetch(`/user/getSubscribe`, {
-        headers: { Authorization: data.data.auth_data },
-      })
-      const subData = await subRes.json()
-      const subUrl = subData.data?.subscribe_url
-      if (!subUrl) {
-        setError('获取订阅失败，请联系客服')
-        setLoading(false)
-        return
-      }
-      const clashUrl = subUrl.includes('?')
-        ? `${subUrl}&flag=verge`
-        : `${subUrl}?flag=verge`
-      // 过期/未开通用户：订阅内容返回 403，导入会失败——但不该拦住登录。
-      // 与 Android 一致：仍算登录成功、进首页，由首页显示到期状态并引导购买。
+      // 拿订阅→多通道导入→激活(单域名被墙掐握手时自动换下一条)。
+      // 过期/未开通用户订阅返回 403,或线路抖动导入失败——都不拦登录:
+      // 仍算登录成功进首页,首页点"连接"时会自动重拉(与安卓一致)。
       try {
-        await importProfile(clashUrl, { with_proxy: false })
+        await ensureSubscription(data.data.auth_data)
         await mutateProfiles()
-        // 自动激活刚导入的订阅配置
-        const profiles = await getProfiles()
-        const items = profiles.items ?? []
-        if (items.length > 0) {
-          const lastItem = items[items.length - 1]
-          if (lastItem?.uid) {
-            await patchProfilesConfig({ current: lastItem.uid })
-            await mutateProfiles()
-          }
-        }
       } catch {
-        // 订阅导入失败（多为套餐到期）：不报错，照常进首页引导续费
+        // 导入失败（套餐到期/线路抖动）：不报错，进首页；点连接会自动重拉
       }
       // 不自动连接：登录后停留在断开状态，由用户手动点"连接"
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')
@@ -959,11 +984,32 @@ const HomePage = () => {
     if (busy) return
     setBusy(true)
     try {
+      // 自愈:未连接且当前没有线路(首次导入失败/线路抖动没拉到),
+      // 先自动多通道重拉一次订阅再连,而不是让用户卡在"暂无可用线路"。
+      if (!connected && nodes.length === 0) {
+        const auth = localStorage.getItem(AUTH_KEY)
+        if (auth) {
+          try {
+            await ensureSubscription(auth)
+            await mutateProfiles()
+            await refreshProxy?.()
+          } catch {
+            // 重拉仍失败(线路全掐/套餐到期):照常尝试连接,不额外打扰
+          }
+        }
+      }
       await toggleSystemProxy(!connected)
     } finally {
       setTimeout(() => setBusy(false), 400)
     }
-  }, [busy, connected, toggleSystemProxy])
+  }, [
+    busy,
+    connected,
+    nodes.length,
+    mutateProfiles,
+    refreshProxy,
+    toggleSystemProxy,
+  ])
 
   const handleSelectNode = useCallback(
     async (name: string) => {
