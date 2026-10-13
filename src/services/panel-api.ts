@@ -7,11 +7,11 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 // 用 @tauri-apps/plugin-http（Rust reqwest 层）而非浏览器 fetch，才能可靠地打明文 http。
 const API_CHANNELS = [
   // 主域名换到 lianjieni.com（GFW 未封过）；caihongmao.org 整域名已在部分线路被整段封杀，退为兜底。
-  'https://p1.lianjieni.com/api/v1',
-  'https://p2.lianjieni.com/api/v1',
-  'https://p3.lianjieni.com/api/v1',
-  'https://cdn9.caihongmao.org/api/v1',
-  'https://cdn10.caihongmao.org/api/v1',
+  'https://p1.yuntanlu.com/api/v1',
+  'https://p2.yuntanlu.com/api/v1',
+  'https://w1.yuntanlu.com/api/v1',
+  'https://w2.yuntanlu.com/api/v1',
+  'https://w3.yuntanlu.com/api/v1',
 ]
 
 // 带超时的 fetch：某通道连接层挂死时，8 秒超时快速回退下一条

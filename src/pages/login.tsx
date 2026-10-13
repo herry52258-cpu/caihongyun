@@ -7,9 +7,9 @@ import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
 import { panelApiFetch } from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.25'
+const APP_VERSION = 'v1.0.26'
 // 面板/注册页用 cdn.caihongmao.org（走CF、SNI未被墙、完整面板镜像）；my. 常被GFW掐
-const PANEL = 'https://p1.lianjieni.com'
+const PANEL = 'https://p1.yuntanlu.com'
 
 // 登录/API 走共享的双通道请求器：直连 IP:8080 优先(国内秒开)，my.(CF) 兜底。
 // 原兜底 m.caihongmao.org(443) 已被 GFW 按 SNI 掐死，弃用。

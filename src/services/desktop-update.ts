@@ -6,16 +6,16 @@ import { openWebUrl } from './cmds'
 // 版本比当前高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
 // 但自动提示 + 一键跳下载已能免去人工提醒）。
 // 发版时同步改 CURRENT_VERSION 与 login.tsx 的 APP_VERSION。
-const CURRENT_VERSION = 'v1.0.25'
+const CURRENT_VERSION = 'v1.0.26'
 
 // 多通道域名，依次试，任一取到即用；被封自动切下一条。都需在服务器挂了 /version-desktop.json。
 const DOMAINS = [
-  'https://p1.lianjieni.com',
-  'https://p2.lianjieni.com',
-  'https://p3.lianjieni.com',
-  'https://dl.lianjieni.com',
-  'https://cdn9.caihongmao.org',
-  'https://dl.caihongmao.org',
+  'https://p1.yuntanlu.com',
+  'https://p2.yuntanlu.com',
+  'https://w1.yuntanlu.com',
+  'https://dl.yuntanlu.com',
+  'https://w2.yuntanlu.com',
+  'https://dl.yuntanlu.com',
 ]
 
 async function fetchJson(path: string): Promise<any | null> {
