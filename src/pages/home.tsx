@@ -30,7 +30,7 @@ import {
 import { panelApiFetch } from '@/services/panel-api'
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
-const PANEL = 'https://p1.yuntanlu.com'
+const PANEL = 'https://p2.yuntanlu.com'
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
 const openWindow = async (url: string, label: string, title = '彩虹猫') => {
@@ -72,13 +72,13 @@ const AUTH_KEY = 'caihongyun_auth'
 
 // 导入订阅的多通道域名(单条被 GFW 掐 TLS 握手时自动换下一条)。都是同一份订阅,任一成功即可。
 const IMPORT_HOSTS = [
-  'p1.yuntanlu.com',
+  'p2.yuntanlu.com',
   'p2.yuntanlu.com',
   'w1.yuntanlu.com',
   'w2.yuntanlu.com',
 ]
 
-// 多通道导入:从 subUrl(形如 https://p1.yuntanlu.com/s/TOKEN)提取路径,
+// 多通道导入:从 subUrl(形如 https://p2.yuntanlu.com/s/TOKEN)提取路径,
 // 依次用各域名 + flag=verge 尝试导入,任一成功即返回;全失败才抛错。
 async function importSubWithFallback(subUrl: string): Promise<void> {
   const path = subUrl.replace(/^https?:\/\/[^/]+/, '') // /s/TOKEN[?...]
