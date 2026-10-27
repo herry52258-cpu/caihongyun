@@ -10,7 +10,7 @@ const CURRENT_VERSION = 'v1.0.26'
 
 // 多通道域名，依次试，任一取到即用；被封自动切下一条。都需在服务器挂了 /version-desktop.json。
 const DOMAINS = [
-  'https://p1.yuntanlu.com',
+  'https://p2.yuntanlu.com',
   'https://p2.yuntanlu.com',
   'https://w1.yuntanlu.com',
   'https://dl.yuntanlu.com',
