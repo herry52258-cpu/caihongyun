@@ -1,10 +1,11 @@
+# 2026-10-31 停用定时构建：每天失败并发送邮件提醒，恢复时取消注释
 name: Auto Build
 
 on:
   workflow_dispatch:
-  schedule:
-    # UTC+8 12:00, 18:00 -> UTC 4:00, 10:00
-    - cron: '0 4,10 * * *'
+  # schedule:
+  #   # UTC+8 12:00, 18:00 -> UTC 4:00, 10:00
+  #   - cron: '0 4,10 * * *'
 permissions: write-all
 env:
   TAG_NAME: autobuild
