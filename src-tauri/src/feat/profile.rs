@@ -182,6 +182,8 @@ async fn perform_profile_update(
 
     if is_mannual_trigger {
         handle::Handle::notice_message("update_failed_even_with_clash", format!("{profile_name} - {last_err}"));
+        // 手动刷新必须把失败交回去。原先这里返回 Ok，界面会以为线路已经更新，但本地文件其实没换。
+        return Err(last_err);
     }
     Ok(is_current)
 }
