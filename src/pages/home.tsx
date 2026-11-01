@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -375,13 +375,28 @@ const NodePicker = ({
   current,
   onSelect,
   onClose,
+  refreshing,
+  onRefresh,
 }: {
   open: boolean
   nodes: string[]
   current: string
   onSelect: (name: string) => void
   onClose: () => void
-}) => (
+  refreshing: boolean
+  onRefresh: () => Promise<boolean>
+}) => {
+  const [tip, setTip] = useState('')
+  useEffect(() => {
+    if (open) setTip('')
+  }, [open])
+  const doRefresh = async () => {
+    if (refreshing) return
+    setTip('')
+    const ok = await onRefresh()
+    setTip(ok ? '✅ 线路已更新' : '❌ 刷新失败，请稍后再试')
+  }
+  return (
   <Dialog
     open={open}
     onClose={onClose}
@@ -395,10 +410,41 @@ const NodePicker = ({
       },
     }}
   >
-    <DialogTitle sx={{ color: '#fff', fontWeight: 700, fontSize: 18 }}>
+    <DialogTitle
+      sx={{
+        color: '#fff',
+        fontWeight: 700,
+        fontSize: 18,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+    >
       选择线路
+      <button
+        type="button"
+        disabled={refreshing}
+        onClick={() => void doRefresh()}
+        style={{
+          border: '1px solid rgba(124,77,255,0.6)',
+          borderRadius: 8,
+          background: 'rgba(124,77,255,0.18)',
+          color: '#fff',
+          fontSize: 13,
+          padding: '4px 10px',
+          cursor: refreshing ? 'default' : 'pointer',
+          opacity: refreshing ? 0.6 : 1,
+        }}
+      >
+        {refreshing ? '⏳ 刷新中...' : '🔄 刷新线路'}
+      </button>
     </DialogTitle>
     <DialogContent sx={{ px: 1, pb: 2 }}>
+      {tip && (
+        <div style={{ color: 'rgba(255,255,255,0.75)', textAlign: 'center', fontSize: 13, paddingBottom: 6 }}>
+          {tip}
+        </div>
+      )}
       <List>
         {nodes.length === 0 && (
           <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>
@@ -430,7 +476,8 @@ const NodePicker = ({
       </List>
     </DialogContent>
   </Dialog>
-)
+  )
+}
 
 // ---------- 原生购买页 ----------
 const PurchaseDialog = ({
@@ -1025,19 +1072,43 @@ const HomePage = () => {
     [primaryGroupName, refreshProxy],
   )
 
-  const handleRefreshSub = useCallback(async () => {
+  const handleRefreshSub = useCallback(async (): Promise<boolean> => {
     setMenuAnchor(null)
-    if (!current?.uid || refreshing) return
+    if (!current?.uid || refreshing) return false
     setRefreshing(true)
     try {
       await updateProfile(current.uid)
       await mutateProfiles()
+      return true
     } catch {
       // 忽略
+      return false
     } finally {
       setRefreshing(false)
     }
   }, [current?.uid, refreshing, mutateProfiles])
+
+  // 启动时及窗口回到前台时自动刷新一次订阅（60 秒节流，失败静默）
+  const lastAutoRefreshRef = useRef(0)
+  useEffect(() => {
+    if (!loggedIn || !current?.uid) return
+    const tryRefresh = () => {
+      const now = Date.now()
+      if (now - lastAutoRefreshRef.current < 60_000) return
+      lastAutoRefreshRef.current = now
+      void handleRefreshSub().catch(() => {})
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tryRefresh()
+    }
+    tryRefresh()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', tryRefresh)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', tryRefresh)
+    }
+  }, [loggedIn, current?.uid, handleRefreshSub])
 
   const handleLogout = useCallback(async () => {
     setMenuAnchor(null)
@@ -1354,6 +1425,8 @@ const HomePage = () => {
         current={currentNode}
         onSelect={handleSelectNode}
         onClose={() => setPickerOpen(false)}
+        refreshing={refreshing}
+        onRefresh={handleRefreshSub}
       />
 
       <PurchaseDialog
