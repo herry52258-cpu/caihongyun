@@ -1,5 +1,6 @@
-// 登录与面板请求的通道顺序。只有连接失败、超时，或明确不是业务 JSON 的响应才换下一条。
-// 账号密码、验证码、限流等 JSON 业务结果必须原样返回，不能换线路重放。
+// 登录和已登记的只读请求才会在非 JSON、超时或连接失败时换线路。
+// 下单、取消、支付和生成邀请码遇到结果不明的失败只打一次，并提示待确认。
+// AbortSignal 和 connectTimeout 只是尽力取消；到期由本地计时器拒绝，不证明套接字已断开。
 export const API_CHANNELS = [
   'https://p2.yuntanlu.com/api/v1',
   'https://w1.yuntanlu.com/api/v1',
@@ -26,8 +27,27 @@ const SAFE_HOSTS = new Set(
 )
 
 export type PanelFailover = 'read' | 'mutation' | 'login'
-export type PanelFailureCode = 'network' | 'timeout' | 'unavailable'
+export type PanelFailureCode =
+  | 'network'
+  | 'timeout'
+  | 'unavailable'
+  | 'unconfirmed'
 export type ChannelAction = 'return' | 'next' | 'stop'
+
+const LOGIN_PATH = '/passport/auth/login'
+const READ_PATHS = new Set([
+  '/user/getSubscribe',
+  '/user/plan/fetch',
+  '/user/order/getPaymentMethod',
+  '/user/order/fetch',
+  '/user/invite/fetch',
+])
+const SIDE_EFFECT_PATHS = new Set([
+  '/user/order/save',
+  '/user/order/cancel',
+  '/user/order/checkout',
+  '/user/invite/save',
+])
 
 export type PanelLimits = {
   perChannelMs: number
@@ -75,20 +95,33 @@ function isUnsafeMethod(method: string): boolean {
   return normalized !== 'GET' && normalized !== 'HEAD'
 }
 
+function normalizePath(path: string): string {
+  const withoutQuery = path.split('?')[0] || path
+  if (withoutQuery.length > 1 && withoutQuery.endsWith('/')) {
+    return withoutQuery.slice(0, -1)
+  }
+  return withoutQuery
+}
+
 export function resolveFailover(
   method: string,
+  path: string,
   requested?: PanelFailover,
 ): PanelFailover {
-  if (requested) return requested
-  return isUnsafeMethod(method) ? 'mutation' : 'read'
+  const normalized = normalizePath(path)
+  if (normalized === LOGIN_PATH && requested !== 'mutation') return 'login'
+  if (SIDE_EFFECT_PATHS.has(normalized) || isUnsafeMethod(method))
+    return 'mutation'
+  if (READ_PATHS.has(normalized) && !isUnsafeMethod(method)) return 'read'
+  return 'mutation'
 }
 
 /**
- * JSON 对象或数组一律视为应用已经处理过，不换线路。
- * 429 即使不是 JSON 也不换，避免把限流放大到其余线路。
- * 读请求和登录：非 JSON（HTML、空体）换线路。登录接口正常时总是返回 JSON 信封。
- * 其他写请求：只在 404/405/502/503/504 这类“应用没接住”的非 JSON 上换线路。
- * 写请求的 500/408/200 HTML 不重试，因为处理程序可能已经产生副作用。
+ * JSON 对象或数组一律视为应用已经给出结论，不换线路。
+ * 429 即使不是 JSON 也不换，避免放大限流。
+ * 只有登录和已登记的只读 GET/HEAD 可以在非 JSON 时换线路。
+ * 有副作用的请求遇到任何非 JSON 都停止。502/503/504 也不能自动重放，
+ * 因为订单或邀请码可能已经写成功。
  */
 export function decideChannel(input: {
   method: string
@@ -99,15 +132,6 @@ export function decideChannel(input: {
   if (isJsonEnvelope(input.body)) return 'return'
   if (input.status === 429) return 'stop'
   if (input.failover === 'read' || input.failover === 'login') return 'next'
-  if (
-    input.status === 404 ||
-    input.status === 405 ||
-    input.status === 502 ||
-    input.status === 503 ||
-    input.status === 504
-  ) {
-    return 'next'
-  }
   return 'stop'
 }
 
@@ -129,7 +153,27 @@ export function loginTransportMessage(error: unknown): string | null {
   const tag = parts.join('·')
   if (error.code === 'timeout') return `网络超时，请稍后重试（${tag}）`
   if (error.code === 'network') return `网络不可用，请稍后重试（${tag}）`
+  if (error.code === 'unconfirmed') return null
   return `服务器暂时不可用，请稍后重试（${tag}）`
+}
+
+export function mutationUnconfirmedMessage(error: unknown): string | null {
+  if (!(error instanceof PanelRequestError)) return null
+  const parts = [`E_${error.code.toUpperCase()}`]
+  if (typeof error.status === 'number') parts.push(String(error.status))
+  parts.push(String(error.attempts))
+  if (error.host) parts.push(error.host)
+  const tag = parts.join('·')
+  if (error.status === 429) return `请求过于频繁，请稍后再试（${tag}）`
+  if (
+    error.code === 'unconfirmed' ||
+    error.code === 'unavailable' ||
+    error.code === 'timeout' ||
+    error.code === 'network'
+  ) {
+    return `操作结果待确认，请勿重复提交（${tag}）`
+  }
+  return null
 }
 
 export function loginBusinessMessage(message: unknown): string {
@@ -159,30 +203,48 @@ function isAbortError(error: unknown): boolean {
   return name === 'AbortError'
 }
 
-function linkSignal(
-  parent: AbortSignal | null | undefined,
-  ms: number,
-): {
-  signal: AbortSignal
-  cancel: () => void
-  didTimeOut: () => boolean
-} {
-  const controller = new AbortController()
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, ms)
-  const onParent = () => controller.abort()
-  parent?.addEventListener('abort', onParent, { once: true })
-  return {
-    signal: controller.signal,
-    didTimeOut: () => timedOut || Boolean(parent?.aborted),
-    cancel: () => {
-      clearTimeout(timer)
-      parent?.removeEventListener('abort', onParent)
-    },
+class DeadlineError extends Error {
+  constructor() {
+    super('deadline')
+    this.name = 'DeadlineError'
   }
+}
+
+function observeDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  parent: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController()
+  let settled = false
+  return new Promise<T>((resolve, reject) => {
+    const finish = (settle: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      parent.removeEventListener('abort', onParent)
+      settle()
+    }
+    const timer = setTimeout(() => {
+      controller.abort()
+      finish(() => reject(new DeadlineError()))
+    }, ms)
+    const onParent = () => {
+      controller.abort()
+      finish(() =>
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+      )
+    }
+    if (parent.aborted) {
+      onParent()
+      return
+    }
+    parent.addEventListener('abort', onParent, { once: true })
+    work(controller.signal).then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    )
+  })
 }
 
 export async function panelApiFetchWith(
@@ -196,8 +258,10 @@ export async function panelApiFetchWith(
   },
 ): Promise<Response> {
   const method = init.method || 'GET'
-  const failover = resolveFailover(method, options?.failover)
+  const failover = resolveFailover(method, path, options?.failover)
   const channels = options?.channels?.length ? options.channels : API_CHANNELS
+  const attemptChannels =
+    failover === 'mutation' ? channels.slice(0, 1) : channels
   const limits: PanelLimits = {
     perChannelMs: options?.limits?.perChannelMs ?? PANEL_LIMITS.perChannelMs,
     totalMs: options?.limits?.totalMs ?? PANEL_LIMITS.totalMs,
@@ -214,7 +278,7 @@ export async function panelApiFetchWith(
   let last = new PanelRequestError('network', { attempts: 0 })
 
   try {
-    for (const base of channels) {
+    for (const base of attemptChannels) {
       if (init.signal?.aborted) {
         throw new PanelRequestError('timeout', {
           attempts,
@@ -235,14 +299,19 @@ export async function panelApiFetchWith(
       attempts += 1
       const perChannelMs = Math.min(limits.perChannelMs, remaining)
       const host = safeChannelHost(base)
-      const linked = linkSignal(total.signal, perChannelMs)
       try {
-        const response = await doFetch(`${base}${path}`, {
-          ...init,
-          signal: linked.signal,
-          connectTimeout: Math.min(limits.connectTimeoutMs, perChannelMs),
-        })
-        const text = await response.text()
+        const { response, text } = await observeDeadline(
+          async (signal) => {
+            const fetched = await doFetch(`${base}${path}`, {
+              ...init,
+              signal,
+              connectTimeout: Math.min(limits.connectTimeoutMs, perChannelMs),
+            })
+            return { response: fetched, text: await fetched.text() }
+          },
+          perChannelMs,
+          total.signal,
+        )
         const action = decideChannel({
           method,
           status: response.status,
@@ -250,23 +319,28 @@ export async function panelApiFetchWith(
           failover,
         })
         if (action === 'return') return rebuildResponse(text, response)
-        last = new PanelRequestError('unavailable', {
-          status: response.status,
-          attempts,
-          host,
-        })
-        if (action === 'stop') throw last
+        const stopped = new PanelRequestError(
+          failover === 'mutation' && response.status !== 429
+            ? 'unconfirmed'
+            : 'unavailable',
+          { status: response.status, attempts, host },
+        )
+        if (action === 'stop' || failover === 'mutation') throw stopped
+        last = stopped
       } catch (error) {
         if (error instanceof PanelRequestError) throw error
         const timedOut =
-          linked.didTimeOut() || isAbortError(error) || total.signal.aborted
+          error instanceof DeadlineError ||
+          isAbortError(error) ||
+          total.signal.aborted
+        if (failover === 'mutation') {
+          throw new PanelRequestError('unconfirmed', { attempts, host })
+        }
         last = new PanelRequestError(timedOut ? 'timeout' : 'network', {
           attempts,
           host,
         })
         if (total.signal.aborted) break
-      } finally {
-        linked.cancel()
       }
     }
     throw last

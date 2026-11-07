@@ -6,8 +6,10 @@ import {
   decideChannel,
   loginBusinessMessage,
   loginTransportMessage,
+  mutationUnconfirmedMessage,
   panelApiFetchWith,
   PanelRequestError,
+  resolveFailover,
 } from '../src/services/panel-api.ts'
 
 const FAST = { perChannelMs: 50, totalMs: 120, connectTimeoutMs: 20 }
@@ -131,7 +133,7 @@ test('登录 5xx HTML 换线路；写请求 500 HTML 不重试', async () => {
       ),
     (error) => {
       assert.equal(error instanceof PanelRequestError, true)
-      assert.equal(error.code, 'unavailable')
+      assert.equal(error.code, 'unconfirmed')
       assert.equal(error.status, 500)
       assert.equal(orderCalls, 1)
       assertNoSecrets(publicView(error))
@@ -193,23 +195,52 @@ test('429 HTML 不轮询，避免放大封禁', async () => {
   )
 })
 
-test('写请求的网关 503 可以换线路，JSON 500 不可以', async () => {
+test('订单 502 HTML 和连接失败都只请求一次', async () => {
   let gatewayCalls = 0
-  const saved = await panelApiFetchWith(
-    async () => {
-      gatewayCalls += 1
-      if (gatewayCalls === 1) return htmlResponse(503)
-      return jsonResponse(200, { data: 'trade-1', message: 'ok' })
-    },
-    '/user/order/save',
-    { method: 'POST' },
-    {
-      channels: ['https://a.test/api/v1', 'https://b.test/api/v1'],
-      limits: FAST,
+  await assert.rejects(
+    () =>
+      panelApiFetchWith(
+        async () => {
+          gatewayCalls += 1
+          return htmlResponse(502)
+        },
+        '/user/order/save',
+        { method: 'POST', body: JSON.stringify({ password: SECRET }) },
+        { channels: API_CHANNELS, limits: FAST },
+      ),
+    (error) => {
+      assert.equal(gatewayCalls, 1)
+      assert.equal(error.code, 'unconfirmed')
+      assert.equal(error.status, 502)
+      assert.equal(loginTransportMessage(error), null)
+      assert.match(
+        mutationUnconfirmedMessage(error),
+        /^操作结果待确认，请勿重复提交/,
+      )
+      assertNoSecrets(publicView(error))
+      return true
     },
   )
-  assert.equal(gatewayCalls, 2)
-  assert.equal((await saved.json()).data, 'trade-1')
+
+  let thrown = 0
+  await assert.rejects(
+    () =>
+      panelApiFetchWith(
+        async () => {
+          thrown += 1
+          throw new Error(`connect ${SECRET}`)
+        },
+        '/user/order/checkout',
+        { method: 'POST' },
+        { channels: API_CHANNELS, limits: FAST },
+      ),
+    (error) => {
+      assert.equal(thrown, 1)
+      assert.equal(error.code, 'unconfirmed')
+      assertNoSecrets(publicView(error))
+      return true
+    },
+  )
 
   let appCalls = 0
   const rejected = await panelApiFetchWith(
@@ -413,7 +444,80 @@ test('调用方已取消时不再请求任何线路', async () => {
   )
 })
 
-test('策略表：登录 HTML 继续，JSON 停止，写请求 500 停止，写请求 502 继续', () => {
+test('省略 method 的邀请码生成也只请求一次', async () => {
+  assert.equal(resolveFailover('GET', '/user/invite/save'), 'mutation')
+  assert.equal(resolveFailover('GET', '/user/invite/fetch'), 'read')
+  assert.equal(resolveFailover('POST', '/user/order/cancel'), 'mutation')
+  assert.equal(resolveFailover('GET', '/user/getSubscribe'), 'read')
+  let calls = 0
+  await assert.rejects(
+    () =>
+      panelApiFetchWith(
+        async () => {
+          calls += 1
+          return htmlResponse(503)
+        },
+        '/user/invite/save',
+        { headers: { Authorization: TOKEN } },
+        { channels: API_CHANNELS, limits: FAST },
+      ),
+    (error) => {
+      assert.equal(calls, 1)
+      assert.equal(error.code, 'unconfirmed')
+      assert.equal(error.status, 503)
+      assertNoSecrets(publicView(error))
+      return true
+    },
+  )
+})
+
+test('忽略 AbortSignal 时到期仍拒绝，迟到结果不会继续轮询', async () => {
+  let calls = 0
+  const late = []
+  const unhandled = []
+  const onUnhandled = (error) => unhandled.push(error)
+  process.on('unhandledRejection', onUnhandled)
+  const started = Date.now()
+  try {
+    await assert.rejects(
+      () =>
+        panelApiFetchWith(
+          () => {
+            calls += 1
+            return new Promise((resolve, reject) => {
+              late.push({ resolve, reject })
+            })
+          },
+          '/passport/auth/login',
+          { method: 'POST', body: JSON.stringify({ password: SECRET }) },
+          {
+            failover: 'login',
+            channels: API_CHANNELS,
+            limits: { perChannelMs: 40, totalMs: 100, connectTimeoutMs: 20 },
+          },
+        ),
+      (error) => {
+        assert.equal(error.code, 'timeout')
+        assert.ok(error.attempts >= 1)
+        assert.ok(error.attempts < API_CHANNELS.length)
+        assertNoSecrets(publicView(error))
+        return true
+      },
+    )
+    assert.ok(Date.now() - started < 500)
+    const callsAtDeadline = calls
+    for (const item of late) item.reject(new Error(`late ${SECRET}`))
+    for (const item of late)
+      item.resolve(jsonResponse(200, { message: 'late' }))
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(calls, callsAtDeadline)
+    assert.equal(unhandled.length, 0)
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandled)
+  }
+})
+
+test('策略表：登录 HTML 继续，JSON 停止，变更请求 502 也停止', () => {
   assert.equal(
     decideChannel({
       method: 'POST',
@@ -448,7 +552,7 @@ test('策略表：登录 HTML 继续，JSON 停止，写请求 500 停止，写�
       body: HTML,
       failover: 'mutation',
     }),
-    'next',
+    'stop',
   )
   assert.equal(
     decideChannel({

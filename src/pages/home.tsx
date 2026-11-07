@@ -30,6 +30,7 @@ import {
 import {
   loginBusinessMessage,
   loginTransportMessage,
+  mutationUnconfirmedMessage,
   panelApiFetch,
 } from '@/services/panel-api'
 
@@ -666,8 +667,8 @@ const PurchaseDialog = ({
       }
       await openWindow(payUrl, 'cashier', '支付')
       setDone('已打开支付页面，付款完成后关闭即可')
-    } catch {
-      setError('下单出错，请重试')
+    } catch (error) {
+      setError(mutationUnconfirmedMessage(error) ?? '下单出错，请重试')
     } finally {
       setBuying(false)
     }
@@ -883,6 +884,7 @@ const InviteDialog = ({
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [noAuth, setNoAuth] = useState(false)
+  const [notice, setNotice] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -905,8 +907,17 @@ const InviteDialog = ({
         let j = await load()
         let codes = j.data?.codes || []
         if (codes.length === 0) {
-          // 没有邀请码则先生成一个
-          await panelApiFetch(`/user/invite/save`, { headers: authHeaders() })
+          // 没有邀请码则先生成一个。生成失败结果不明，不自动再打一次。
+          try {
+            await panelApiFetch(`/user/invite/save`, { headers: authHeaders() })
+          } catch (error) {
+            const pending = mutationUnconfirmedMessage(error)
+            if (pending) {
+              setNotice(pending)
+              return
+            }
+            throw error
+          }
           j = await load()
           codes = j.data?.codes || []
         }
@@ -1028,7 +1039,7 @@ const InviteDialog = ({
                 marginBottom: 8,
               }}
             >
-              你的专属邀请链接：
+              {notice || '你的专属邀请链接：'}
             </div>
             <div
               style={{
