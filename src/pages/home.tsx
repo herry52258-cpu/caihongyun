@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -10,6 +9,7 @@ import {
 } from '@mui/material'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 // 猫图打包进 App，不再从 caihongmao.org 远程加载：
@@ -27,10 +27,18 @@ import {
   patchVergeConfig,
   updateProfile,
 } from '@/services/cmds'
-import { panelApiFetch } from '@/services/panel-api'
+import {
+  PANEL_WEB_ORIGIN,
+  isHostnameOnly,
+  panelApiFetch,
+  safePanelError,
+} from '@/services/panel-api'
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
-const PANEL = 'https://p2.yuntanlu.com'
+const INITIAL_LOGGED_IN =
+  typeof localStorage !== 'undefined' &&
+  !!localStorage.getItem(CAIHONGYUN_INIT_KEY)
+const PANEL = PANEL_WEB_ORIGIN
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
 const openWindow = async (url: string, label: string, title = '彩虹猫') => {
@@ -72,28 +80,34 @@ const AUTH_KEY = 'caihongyun_auth'
 
 // 导入订阅的多通道域名(单条被 GFW 掐 TLS 握手时自动换下一条)。都是同一份订阅,任一成功即可。
 const IMPORT_HOSTS = [
-  'p2.yuntanlu.com',
+  'lianjieni.com',
   'p2.yuntanlu.com',
   'w1.yuntanlu.com',
   'w2.yuntanlu.com',
 ]
 
-// 多通道导入:从 subUrl(形如 https://p2.yuntanlu.com/s/TOKEN)提取路径,
-// 依次用各域名 + flag=verge 尝试导入,任一成功即返回;全失败才抛错。
+// 多通道导入:只替换订阅 URL 的主机名,路径原样保留。
+// 失败原因只保留主机名,不把订阅路径或底层异常带进错误。
 async function importSubWithFallback(subUrl: string): Promise<void> {
-  const path = subUrl.replace(/^https?:\/\/[^/]+/, '') // /s/TOKEN[?...]
-  let lastErr: unknown
+  const path = subUrl.replace(/^https?:\/\/[^/]+/, '')
+  const attempts: string[] = []
+  if (!path.startsWith('/')) {
+    throw new Error('网络或TLS失败')
+  }
   for (const host of IMPORT_HOSTS) {
+    if (!isHostnameOnly(host)) continue
     const base = `https://${host}${path}`
-    const clashUrl = base.includes('?') ? `${base}&flag=verge` : `${base}?flag=verge`
+    const clashUrl = base.includes('?')
+      ? `${base}&flag=verge`
+      : `${base}?flag=verge`
     try {
       await importProfile(clashUrl, { with_proxy: false })
       return
-    } catch (e) {
-      lastErr = e
+    } catch {
+      attempts.push(`${host}: 网络或TLS失败`)
     }
   }
-  throw lastErr ?? new Error('import failed')
+  throw new Error(attempts.join('；') || '网络或TLS失败')
 }
 
 // 登录/连接共用:拿订阅链接 → 多通道导入 → 激活刚导入的配置。
@@ -179,23 +193,58 @@ const buildPlans = (data: unknown[]): PlanItem[] => {
 
 // ---------- 工具 ----------
 const FLAGS: [string, string][] = [
-  ['香港', '🇭🇰'], ['Hong Kong', '🇭🇰'], ['HK', '🇭🇰'],
-  ['台湾', '🇹🇼'], ['臺灣', '🇹🇼'], ['Taiwan', '🇹🇼'], ['TW', '🇹🇼'],
-  ['日本', '🇯🇵'], ['东京', '🇯🇵'], ['大阪', '🇯🇵'], ['Japan', '🇯🇵'], ['JP', '🇯🇵'],
-  ['新加坡', '🇸🇬'], ['狮城', '🇸🇬'], ['Singapore', '🇸🇬'], ['SG', '🇸🇬'],
-  ['洛杉矶', '🇺🇸'], ['圣何塞', '🇺🇸'], ['硅谷', '🇺🇸'], ['美国', '🇺🇸'], ['United States', '🇺🇸'], ['US', '🇺🇸'],
-  ['首尔', '🇰🇷'], ['韩国', '🇰🇷'], ['Korea', '🇰🇷'], ['KR', '🇰🇷'],
-  ['伦敦', '🇬🇧'], ['英国', '🇬🇧'], ['UK', '🇬🇧'],
-  ['德国', '🇩🇪'], ['Germany', '🇩🇪'], ['DE', '🇩🇪'],
-  ['法国', '🇫🇷'], ['France', '🇫🇷'], ['FR', '🇫🇷'],
-  ['俄罗斯', '🇷🇺'], ['RU', '🇷🇺'],
-  ['印度', '🇮🇳'], ['IN', '🇮🇳'],
-  ['泰国', '🇹🇭'], ['TH', '🇹🇭'],
-  ['马来', '🇲🇾'], ['MY', '🇲🇾'],
-  ['越南', '🇻🇳'], ['VN', '🇻🇳'],
-  ['土耳其', '🇹🇷'], ['TR', '🇹🇷'],
-  ['加拿大', '🇨🇦'], ['CA', '🇨🇦'],
-  ['澳大利亚', '🇦🇺'], ['澳洲', '🇦🇺'], ['AU', '🇦🇺'],
+  ['香港', '🇭🇰'],
+  ['Hong Kong', '🇭🇰'],
+  ['HK', '🇭🇰'],
+  ['台湾', '🇹🇼'],
+  ['臺灣', '🇹🇼'],
+  ['Taiwan', '🇹🇼'],
+  ['TW', '🇹🇼'],
+  ['日本', '🇯🇵'],
+  ['东京', '🇯🇵'],
+  ['大阪', '🇯🇵'],
+  ['Japan', '🇯🇵'],
+  ['JP', '🇯🇵'],
+  ['新加坡', '🇸🇬'],
+  ['狮城', '🇸🇬'],
+  ['Singapore', '🇸🇬'],
+  ['SG', '🇸🇬'],
+  ['洛杉矶', '🇺🇸'],
+  ['圣何塞', '🇺🇸'],
+  ['硅谷', '🇺🇸'],
+  ['美国', '🇺🇸'],
+  ['United States', '🇺🇸'],
+  ['US', '🇺🇸'],
+  ['首尔', '🇰🇷'],
+  ['韩国', '🇰🇷'],
+  ['Korea', '🇰🇷'],
+  ['KR', '🇰🇷'],
+  ['伦敦', '🇬🇧'],
+  ['英国', '🇬🇧'],
+  ['UK', '🇬🇧'],
+  ['德国', '🇩🇪'],
+  ['Germany', '🇩🇪'],
+  ['DE', '🇩🇪'],
+  ['法国', '🇫🇷'],
+  ['France', '🇫🇷'],
+  ['FR', '🇫🇷'],
+  ['俄罗斯', '🇷🇺'],
+  ['RU', '🇷🇺'],
+  ['印度', '🇮🇳'],
+  ['IN', '🇮🇳'],
+  ['泰国', '🇹🇭'],
+  ['TH', '🇹🇭'],
+  ['马来', '🇲🇾'],
+  ['MY', '🇲🇾'],
+  ['越南', '🇻🇳'],
+  ['VN', '🇻🇳'],
+  ['土耳其', '🇹🇷'],
+  ['TR', '🇹🇷'],
+  ['加拿大', '🇨🇦'],
+  ['CA', '🇨🇦'],
+  ['澳大利亚', '🇦🇺'],
+  ['澳洲', '🇦🇺'],
+  ['AU', '🇦🇺'],
 ]
 
 const flagFor = (name: string): string => {
@@ -252,8 +301,8 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')
       localStorage.setItem('caihongyun_email', email)
       onSuccess()
-    } catch {
-      setError('网络错误，请稍后重试')
+    } catch (error) {
+      setError(safePanelError(error))
     } finally {
       setLoading(false)
     }
@@ -292,10 +341,23 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
             alt="彩虹猫"
             style={{ objectFit: 'contain' }}
           />
-          <div style={{ color: '#fff', fontSize: 22, fontWeight: 700, marginTop: 8 }}>
+          <div
+            style={{
+              color: '#fff',
+              fontSize: 22,
+              fontWeight: 700,
+              marginTop: 8,
+            }}
+          >
             彩虹猫
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 4 }}>
+          <div
+            style={{
+              color: 'rgba(255,255,255,0.5)',
+              fontSize: 13,
+              marginTop: 4,
+            }}
+          >
             安全自由，专属 LGBT 社群
           </div>
         </div>
@@ -317,7 +379,9 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
             style={inputStyle}
           />
           {error && (
-            <div style={{ color: '#ff6b6b', fontSize: 13, textAlign: 'center' }}>
+            <div
+              style={{ color: '#ff6b6b', fontSize: 13, textAlign: 'center' }}
+            >
               {error}
             </div>
           )}
@@ -351,13 +415,22 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
           >
             <span
               onClick={() => void openPanel('#/register')}
-              style={{ color: '#b388ff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+              style={{
+                color: '#b388ff',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
             >
               ✨ 免费注册
             </span>
             <span
               onClick={() => void openPanel('#/forget')}
-              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, cursor: 'pointer' }}
+              style={{
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
             >
               忘记密码
             </span>
@@ -401,7 +474,13 @@ const NodePicker = ({
     <DialogContent sx={{ px: 1, pb: 2 }}>
       <List>
         {nodes.length === 0 && (
-          <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>
+          <div
+            style={{
+              color: 'rgba(255,255,255,0.5)',
+              textAlign: 'center',
+              padding: 20,
+            }}
+          >
             暂无可用线路
           </div>
         )}
@@ -421,9 +500,15 @@ const NodePicker = ({
                 '&:hover': { background: 'rgba(255,255,255,0.06)' },
               }}
             >
-              <span style={{ fontSize: 20, marginRight: 12 }}>{flagFor(name)}</span>
-              <span style={{ flex: 1, fontSize: 15, color: '#fff' }}>{name}</span>
-              {active && <span style={{ color: '#7c4dff', fontSize: 18 }}>✓</span>}
+              <span style={{ fontSize: 20, marginRight: 12 }}>
+                {flagFor(name)}
+              </span>
+              <span style={{ flex: 1, fontSize: 15, color: '#fff' }}>
+                {name}
+              </span>
+              {active && (
+                <span style={{ color: '#7c4dff', fontSize: 18 }}>✓</span>
+              )}
             </ListItemButton>
           )
         })}
@@ -457,31 +542,32 @@ const PurchaseDialog = ({
     return ok.length > 0 ? ok : payments
   }, [payments, selected])
 
-  // 所选支付方式若被过滤掉，自动切到第一个可用的
-  useEffect(() => {
-    if (availablePays.length === 0) return
-    if (!availablePays.some((p) => p.id === payId)) {
-      setPayId(availablePays[0].id)
-    }
-  }, [availablePays, payId])
+  // 所选支付方式若被过滤掉，用第一个仍可用的，不必在 effect 里再写一次状态
+  const activePayId =
+    payId != null && availablePays.some((p) => p.id === payId)
+      ? payId
+      : (availablePays[0]?.id ?? null)
 
   useEffect(() => {
     if (!open) return
-    setError('')
-    setDone('')
-    const token = localStorage.getItem(AUTH_KEY)
-    if (!token) {
-      setNoAuth(true)
-      return
-    }
-    setNoAuth(false)
-    setLoading(true)
+    let cancelled = false
     void (async () => {
+      setError('')
+      setDone('')
+      const token = localStorage.getItem(AUTH_KEY)
+      if (!token) {
+        if (!cancelled) setNoAuth(true)
+        return
+      }
+      if (cancelled) return
+      setNoAuth(false)
+      setLoading(true)
       try {
         const pr = await panelApiFetch(`/user/plan/fetch`, {
           headers: authHeaders(),
         })
         const pj = await pr.json()
+        if (cancelled) return
         const list = buildPlans(pj.data || [])
         setPlans(list)
         setSelected(
@@ -494,18 +580,24 @@ const PurchaseDialog = ({
           headers: authHeaders(),
         })
         const mj = await mr.json()
-        const pays: PayItem[] = (mj.data || []).map((o: Record<string, unknown>) => ({
-          id: Number(o.id),
-          name: String(o.name || '支付'),
-        }))
+        if (cancelled) return
+        const pays: PayItem[] = (mj.data || []).map(
+          (o: Record<string, unknown>) => ({
+            id: Number(o.id),
+            name: String(o.name || '支付'),
+          }),
+        )
         setPayments(pays)
         setPayId(pays[0]?.id ?? null)
-      } catch {
-        setError('加载套餐失败，请检查网络')
+      } catch (error) {
+        if (!cancelled) setError(safePanelError(error))
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [open])
 
   const cancelPending = async () => {
@@ -529,7 +621,7 @@ const PurchaseDialog = ({
   }
 
   const onBuy = async () => {
-    if (!selected || payId == null || buying) return
+    if (!selected || activePayId == null || buying) return
     setBuying(true)
     setError('')
     setDone('')
@@ -568,7 +660,7 @@ const PurchaseDialog = ({
       const co = await panelApiFetch(`/user/order/checkout`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ trade_no: tradeNo, method: payId }),
+        body: JSON.stringify({ trade_no: tradeNo, method: activePayId }),
       })
       const cj = await co.json()
       if (!co.ok) {
@@ -586,8 +678,8 @@ const PurchaseDialog = ({
       }
       await openWindow(payUrl, 'cashier', '支付')
       setDone('已打开支付页面，付款完成后关闭即可')
-    } catch {
-      setError('下单出错，请重试')
+    } catch (error) {
+      setError(safePanelError(error))
     } finally {
       setBuying(false)
     }
@@ -611,21 +703,34 @@ const PurchaseDialog = ({
       <DialogContent sx={{ pb: 3 }}>
         {noAuth ? (
           <div style={{ textAlign: 'center', padding: '16px 4px' }}>
-            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.8 }}>
+            <div
+              style={{
+                color: 'rgba(255,255,255,0.85)',
+                fontSize: 14,
+                lineHeight: 1.8,
+              }}
+            >
               旧版本升级需要重新登录一次。
               <br />
               请从右上角菜单「退出登录」后重新登录，再来购买。
             </div>
           </div>
         ) : loading ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.6)', padding: 24 }}>
+          <div
+            style={{
+              textAlign: 'center',
+              color: 'rgba(255,255,255,0.6)',
+              padding: 24,
+            }}
+          >
             加载套餐中…
           </div>
         ) : (
           <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {plans.map((p) => {
-                const active = selected?.period === p.period && selected?.id === p.id
+                const active =
+                  selected?.period === p.period && selected?.id === p.id
                 return (
                   <div
                     key={`${p.id}-${p.period}`}
@@ -659,7 +764,9 @@ const PurchaseDialog = ({
                       </span>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: 19, fontWeight: 800 }}>{yuan(p.price)}</span>
+                      <span style={{ fontSize: 19, fontWeight: 800 }}>
+                        {yuan(p.price)}
+                      </span>
                       {p.orig && (
                         <span
                           style={{
@@ -677,7 +784,13 @@ const PurchaseDialog = ({
                 )
               })}
               {plans.length === 0 && (
-                <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 16 }}>
+                <div
+                  style={{
+                    color: 'rgba(255,255,255,0.5)',
+                    textAlign: 'center',
+                    padding: 16,
+                  }}
+                >
                   暂无可购买套餐
                 </div>
               )}
@@ -685,7 +798,7 @@ const PurchaseDialog = ({
             {availablePays.length > 1 && (
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 {availablePays.map((pay) => {
-                  const on = payId === pay.id
+                  const on = activePayId === pay.id
                   return (
                     <div
                       key={pay.id}
@@ -701,7 +814,9 @@ const PurchaseDialog = ({
                         border: on
                           ? '1.5px solid #7c4dff'
                           : '1px solid rgba(255,255,255,0.12)',
-                        background: on ? 'rgba(124,77,255,0.15)' : 'transparent',
+                        background: on
+                          ? 'rgba(124,77,255,0.15)'
+                          : 'transparent',
                       }}
                     >
                       {pay.name}
@@ -711,12 +826,26 @@ const PurchaseDialog = ({
               </div>
             )}
             {error && (
-              <div style={{ color: '#ff6b6b', fontSize: 13, textAlign: 'center', marginTop: 12 }}>
+              <div
+                style={{
+                  color: '#ff6b6b',
+                  fontSize: 13,
+                  textAlign: 'center',
+                  marginTop: 12,
+                }}
+              >
                 {error}
               </div>
             )}
             {done && (
-              <div style={{ color: '#7CFFB2', fontSize: 13, textAlign: 'center', marginTop: 12 }}>
+              <div
+                style={{
+                  color: '#7CFFB2',
+                  fontSize: 13,
+                  textAlign: 'center',
+                  marginTop: 12,
+                }}
+              >
                 {done}
               </div>
             )}
@@ -769,15 +898,17 @@ const InviteDialog = ({
 
   useEffect(() => {
     if (!open) return
-    setCopied(false)
-    const token = localStorage.getItem(AUTH_KEY)
-    if (!token) {
-      setNoAuth(true)
-      return
-    }
-    setNoAuth(false)
-    setLoading(true)
+    let cancelled = false
     void (async () => {
+      setCopied(false)
+      const token = localStorage.getItem(AUTH_KEY)
+      if (!token) {
+        if (!cancelled) setNoAuth(true)
+        return
+      }
+      if (cancelled) return
+      setNoAuth(false)
+      setLoading(true)
       try {
         const load = async () => {
           const r = await panelApiFetch(`/user/invite/fetch`, {
@@ -793,6 +924,7 @@ const InviteDialog = ({
           j = await load()
           codes = j.data?.codes || []
         }
+        if (cancelled) return
         setCode(codes[0]?.code || '')
         const stat = j.data?.stat || []
         setInvited(Number(stat[0] || 0))
@@ -801,9 +933,12 @@ const InviteDialog = ({
       } catch {
         // 忽略
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [open])
 
   const link = code ? `${PANEL}/#/register?code=${code}` : ''
@@ -840,13 +975,27 @@ const InviteDialog = ({
       <DialogTitle sx={{ fontWeight: 800 }}>🎁 邀请好友 · 赚返利</DialogTitle>
       <DialogContent sx={{ pb: 3 }}>
         {noAuth ? (
-          <div style={{ textAlign: 'center', padding: '16px 4px', color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: 1.8 }}>
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '16px 4px',
+              color: 'rgba(255,255,255,0.85)',
+              fontSize: 14,
+              lineHeight: 1.8,
+            }}
+          >
             旧版本升级需要重新登录一次。
             <br />
             请从右上角菜单「退出登录」后重新登录，再来邀请。
           </div>
         ) : loading ? (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.6)', padding: 24 }}>
+          <div
+            style={{
+              textAlign: 'center',
+              color: 'rgba(255,255,255,0.6)',
+              padding: 24,
+            }}
+          >
             加载中…
           </div>
         ) : (
@@ -856,7 +1005,10 @@ const InviteDialog = ({
               {[
                 { label: '已邀请', value: `${invited} 人` },
                 { label: '返利比例', value: `${rate}%` },
-                { label: '可用佣金', value: `¥${(commission / 100).toFixed(2)}` },
+                {
+                  label: '可用佣金',
+                  value: `¥${(commission / 100).toFixed(2)}`,
+                },
               ].map((s) => (
                 <div
                   key={s.label}
@@ -869,13 +1021,31 @@ const InviteDialog = ({
                     padding: '12px 4px',
                   }}
                 >
-                  <div style={{ fontSize: 17, fontWeight: 800, color: '#e0b3ff' }}>{s.value}</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>{s.label}</div>
+                  <div
+                    style={{ fontSize: 17, fontWeight: 800, color: '#e0b3ff' }}
+                  >
+                    {s.value}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'rgba(255,255,255,0.55)',
+                      marginTop: 4,
+                    }}
+                  >
+                    {s.label}
+                  </div>
                 </div>
               ))}
             </div>
 
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginBottom: 8 }}>
+            <div
+              style={{
+                fontSize: 13,
+                color: 'rgba(255,255,255,0.6)',
+                marginBottom: 8,
+              }}
+            >
               你的专属邀请链接：
             </div>
             <div
@@ -911,7 +1081,9 @@ const InviteDialog = ({
                   fontSize: 13,
                   fontWeight: 700,
                   color: '#fff',
-                  background: copied ? '#2fbf71' : 'linear-gradient(135deg,#e040fb,#7c4dff)',
+                  background: copied
+                    ? '#2fbf71'
+                    : 'linear-gradient(135deg,#e040fb,#7c4dff)',
                   cursor: link ? 'pointer' : 'not-allowed',
                   whiteSpace: 'nowrap',
                 }}
@@ -920,8 +1092,16 @@ const InviteDialog = ({
               </button>
             </div>
 
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.5)', marginTop: 14, lineHeight: 1.7 }}>
-              把链接发给好友，好友通过它注册并购买，你可获得 {rate || 10}% 返利，佣金可提现或抵扣续费。
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'rgba(255,255,255,0.5)',
+                marginTop: 14,
+                lineHeight: 1.7,
+              }}
+            >
+              把链接发给好友，好友通过它注册并购买，你可获得 {rate || 10}%
+              返利，佣金可提现或抵扣续费。
             </div>
           </>
         )}
@@ -932,9 +1112,7 @@ const InviteDialog = ({
 
 // ---------- 主页（一键连接） ----------
 const HomePage = () => {
-  const [loggedIn, setLoggedIn] = useState(
-    !!localStorage.getItem(CAIHONGYUN_INIT_KEY),
-  )
+  const [loggedIn, setLoggedIn] = useState(INITIAL_LOGGED_IN)
   const { current, mutateProfiles } = useProfiles()
   const { indicator, configState, toggleSystemProxy } = useSystemProxyState()
   const { proxies } = useProxiesData()
@@ -1097,7 +1275,13 @@ const HomePage = () => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src={CAT_LOGO} width={30} height={30} alt="" style={{ objectFit: 'contain' }} />
+          <img
+            src={CAT_LOGO}
+            width={30}
+            height={30}
+            alt=""
+            style={{ objectFit: 'contain' }}
+          />
           <span
             style={{
               fontSize: 18,
@@ -1130,7 +1314,9 @@ const HomePage = () => {
           anchorEl={menuAnchor}
           open={Boolean(menuAnchor)}
           onClose={() => setMenuAnchor(null)}
-          slotProps={{ paper: { sx: { bgcolor: '#1a1a2e', color: '#fff', minWidth: 180 } } }}
+          slotProps={{
+            paper: { sx: { bgcolor: '#1a1a2e', color: '#fff', minWidth: 180 } },
+          }}
         >
           <MenuItem onClick={openPurchase}>🛒 购买 / 升级套餐</MenuItem>
           <MenuItem
@@ -1202,7 +1388,9 @@ const HomePage = () => {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              animation: connected ? 'cat-pulse 2.4s ease-out infinite' : 'none',
+              animation: connected
+                ? 'cat-pulse 2.4s ease-out infinite'
+                : 'none',
             }}
           >
             <img
@@ -1254,7 +1442,9 @@ const HomePage = () => {
             maxWidth: 320,
           }}
         >
-          <span style={{ fontSize: 18 }}>{currentNode ? flagFor(currentNode) : '🌐'}</span>
+          <span style={{ fontSize: 18 }}>
+            {currentNode ? flagFor(currentNode) : '🌐'}
+          </span>
           <span
             style={{
               maxWidth: 220,

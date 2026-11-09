@@ -5,14 +5,15 @@ import { useNavigate } from 'react-router'
 // 猫图打包进 App，不再从 caihongmao.org 远程加载（该域名走 Cloudflare，未连 VPN 时国内常被干扰）
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import { importProfile, openWebUrl } from '@/services/cmds'
-import { panelApiFetch } from '@/services/panel-api'
+import {
+  PANEL_WEB_ORIGIN,
+  panelApiFetch,
+  safePanelError,
+} from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.28'
-// 面板/注册页用 cdn.caihongmao.org（走CF、SNI未被墙、完整面板镜像）；my. 常被GFW掐
-const PANEL = 'https://p2.yuntanlu.com'
+const APP_VERSION = 'v1.0.29'
+const PANEL = PANEL_WEB_ORIGIN
 
-// 登录/API 走共享的双通道请求器：直连 IP:8080 优先(国内秒开)，my.(CF) 兜底。
-// 原兜底 m.caihongmao.org(443) 已被 GFW 按 SNI 掐死，弃用。
 const apiFetch = panelApiFetch
 
 // 在应用内 WebView 窗口打开面板（提权运行时系统浏览器会"找不到应用程序"）
@@ -101,37 +102,58 @@ export default function LoginPage() {
       localStorage.setItem('caihongyun_initialized', '1')
       localStorage.setItem('caihongyun_email', email)
       navigate('/')
-    } catch (e) {
-      setError('网络错误，请稍后重试')
+    } catch (error) {
+      setError(safePanelError(error))
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100vh',
-      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-      fontFamily: 'system-ui, sans-serif',
-    }}>
-      <div style={{
-        background: 'rgba(255,255,255,0.05)',
-        backdropFilter: 'blur(20px)',
-        borderRadius: 20,
-        padding: '40px 36px',
-        width: 340,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        border: '1px solid rgba(255,255,255,0.1)',
-      }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        background:
+          'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        fontFamily: 'system-ui, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          background: 'rgba(255,255,255,0.05)',
+          backdropFilter: 'blur(20px)',
+          borderRadius: 20,
+          padding: '40px 36px',
+          width: 340,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          border: '1px solid rgba(255,255,255,0.1)',
+        }}
+      >
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <img src={CAT_LOGO} width={76} height={76} alt="彩虹猫" style={{ marginBottom: 8, display: 'inline-block' }} />
-          <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>彩虹猫</h1>
-          <p style={{ color: 'rgba(255,255,255,0.5)', margin: '6px 0 0', fontSize: 13 }}>
+          <img
+            src={CAT_LOGO}
+            width={76}
+            height={76}
+            alt="彩虹猫"
+            style={{ marginBottom: 8, display: 'inline-block' }}
+          />
+          <h1
+            style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}
+          >
+            彩虹猫
+          </h1>
+          <p
+            style={{
+              color: 'rgba(255,255,255,0.5)',
+              margin: '6px 0 0',
+              fontSize: 13,
+            }}
+          >
             安全自由，专属LGBT社群
           </p>
         </div>
@@ -142,8 +164,8 @@ export default function LoginPage() {
             type="email"
             placeholder="邮箱"
             value={email}
-            onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
             style={{
               padding: '12px 16px',
               borderRadius: 10,
@@ -158,8 +180,8 @@ export default function LoginPage() {
             type="password"
             placeholder="密码"
             value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
             style={{
               padding: '12px 16px',
               borderRadius: 10,
@@ -172,7 +194,14 @@ export default function LoginPage() {
           />
 
           {error && (
-            <p style={{ color: '#ff6b6b', fontSize: 13, margin: 0, textAlign: 'center' }}>
+            <p
+              style={{
+                color: '#ff6b6b',
+                fontSize: 13,
+                margin: 0,
+                textAlign: 'center',
+              }}
+            >
               {error}
             </p>
           )}
@@ -200,7 +229,11 @@ export default function LoginPage() {
           <div style={{ textAlign: 'center', marginTop: 8 }}>
             <span
               onClick={() => void openPanel('#/register')}
-              style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, cursor: 'pointer' }}
+              style={{
+                color: 'rgba(255,255,255,0.5)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
             >
               还没有账号？点此注册
             </span>
@@ -208,7 +241,15 @@ export default function LoginPage() {
 
           {/* 版本号：便于用户/客服确认安装的是哪个版本 */}
           <div style={{ textAlign: 'center', marginTop: 6 }}>
-            <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, letterSpacing: 0.3 }}>彩虹猫桌面版 {APP_VERSION}</span>
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.75)',
+                fontSize: 12,
+                letterSpacing: 0.3,
+              }}
+            >
+              彩虹猫桌面版 {APP_VERSION}
+            </span>
           </div>
         </div>
       </div>

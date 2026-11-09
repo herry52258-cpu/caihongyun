@@ -1,33 +1,41 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
 import { openWebUrl } from './cmds'
+import { PANEL_HOST_TIMEOUT_MS, isHostnameOnly } from './panel-api'
 
 // 桌面版在线更新检查：启动时拉 /version-desktop.json（多域名抗封），
 // 版本比当前高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
 // 但自动提示 + 一键跳下载已能免去人工提醒）。
 // 发版时同步改 CURRENT_VERSION 与 login.tsx 的 APP_VERSION。
-const CURRENT_VERSION = 'v1.0.28'
+const CURRENT_VERSION = 'v1.0.29'
 
-// 多通道域名，依次试，任一取到即用；被封自动切下一条。都需在服务器挂了 /version-desktop.json。
-const DOMAINS = [
-  'https://p2.yuntanlu.com',
-  'https://p2.yuntanlu.com',
-  'https://w1.yuntanlu.com',
-  'https://dl.yuntanlu.com',
-  'https://w2.yuntanlu.com',
-  'https://dl.yuntanlu.com',
+// 更新清单主机。lianjieni.com 优先；yuntanlu 为历史备用。不包含未验证的 lianjieni 子域名。
+const UPDATE_HOSTS = [
+  'lianjieni.com',
+  'p2.yuntanlu.com',
+  'w1.yuntanlu.com',
+  'dl.yuntanlu.com',
+  'w2.yuntanlu.com',
 ]
 
 async function fetchJson(path: string): Promise<any | null> {
-  for (const base of DOMAINS) {
+  for (const host of UPDATE_HOSTS) {
+    if (!isHostnameOnly(host)) continue
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), PANEL_HOST_TIMEOUT_MS)
     try {
-      const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), 4000)
-      const res = await tauriFetch(base + path, { signal: ctrl.signal })
-      clearTimeout(timer)
-      if (res.ok) return await res.json()
+      const res = await tauriFetch(`https://${host}${path}`, {
+        redirect: 'manual',
+        maxRedirections: 0,
+        signal: ctrl.signal,
+      })
+      if (!res.ok) continue
+      const data = await res.json()
+      if (data && typeof data === 'object') return data
     } catch {
-      // 换下一条通道
+      // 换下一条通道。不记录底层异常、响应体或查询串。
+    } finally {
+      clearTimeout(timer)
     }
   }
   return null
@@ -35,7 +43,10 @@ async function fetchJson(path: string): Promise<any | null> {
 
 // v1.0.21 -> 10021，便于数值比较
 function verNum(v: string): number {
-  const parts = (v || '').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0)
+  const parts = (v || '')
+    .replace(/^v/i, '')
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0)
   return (parts[0] || 0) * 10000 + (parts[1] || 0) * 100 + (parts[2] || 0)
 }
 
@@ -53,7 +64,8 @@ function showModal(version: string, changelog: string, url: string) {
   h.style.cssText = 'font-size:17px;font-weight:700;margin:0 0 10px;'
   const c = document.createElement('div')
   c.textContent = changelog || '建议更新到最新版本'
-  c.style.cssText = 'font-size:13px;color:#c9c6d6;white-space:pre-wrap;line-height:1.55;margin:0 0 18px;'
+  c.style.cssText =
+    'font-size:13px;color:#c9c6d6;white-space:pre-wrap;line-height:1.55;margin:0 0 18px;'
   const btn = document.createElement('button')
   btn.textContent = '前往下载'
   btn.style.cssText =
@@ -64,7 +76,8 @@ function showModal(version: string, changelog: string, url: string) {
   }
   const cl = document.createElement('div')
   cl.textContent = '稍后'
-  cl.style.cssText = 'text-align:center;color:#888;font-size:13px;cursor:pointer;padding:6px;'
+  cl.style.cssText =
+    'text-align:center;color:#888;font-size:13px;cursor:pointer;padding:6px;'
   cl.onclick = () => ov.remove()
   box.appendChild(h)
   box.appendChild(c)
