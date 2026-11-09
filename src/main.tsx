@@ -10,9 +10,9 @@ import { MihomoWebSocket } from 'tauri-plugin-mihomo-api'
 
 import { BaseErrorBoundary } from './components/base'
 import { router } from './pages/_routers'
-import { getProfiles, importProfile, patchProfilesConfig } from './services/cmds'
 import { AppDataProvider } from './providers/app-data-provider'
 import { WindowProvider } from './providers/window'
+import { checkDesktopUpdate } from './services/desktop-update'
 import { FALLBACK_LANGUAGE, initializeLanguage } from './services/i18n'
 import {
   preloadAppData,
@@ -26,7 +26,6 @@ import {
   UpdateStateProvider,
 } from './services/states'
 import { disableWebViewShortcuts } from './utils/disable-webview-shortcuts'
-import { checkDesktopUpdate } from './services/desktop-update'
 
 if (!window.ResizeObserver) {
   window.ResizeObserver = ResizeObserver
@@ -66,8 +65,7 @@ const initializeApp = (initialThemeMode: 'light' | 'dark') => {
   )
 }
 
-// 彩虹猫内置订阅 - 首次启动自动导入
-const CAIHONGYUN_SUB_URL = 'https://p2.yuntanlu.com/api/v1/client/subscribe?token='
+// 未登录时进入登录页。订阅在登录成功后由面板接口导入。
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 
 const autoInitSubscription = async () => {
@@ -84,7 +82,9 @@ const bootstrap = async () => {
   await autoInitSubscription()
   initializeApp(initialThemeMode)
   // 启动后检查桌面版更新（多通道抗封，不阻塞）
-  setTimeout(() => { checkDesktopUpdate() }, 3000)
+  setTimeout(() => {
+    checkDesktopUpdate()
+  }, 3000)
 }
 
 bootstrap().catch((error) => {

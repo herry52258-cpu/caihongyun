@@ -44,6 +44,7 @@ export default defineConfig([
             `vite.config.mts`,
             'scripts/*.mjs',
             'src/polyfills/*.js',
+            'src/services/panel-api.test.ts',
           ],
         },
       },

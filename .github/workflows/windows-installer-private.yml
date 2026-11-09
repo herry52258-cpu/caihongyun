@@ -1,0 +1,76 @@
+# Build the Windows installer and keep it as a workflow artifact.
+# This file does not create tags, GitHub Releases, or update manifests.
+name: Windows installer (no release)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/china-login-hosts-d73e
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download mihomo core
+        run: node scripts/prebuild.mjs x86_64-pc-windows-msvc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows installer
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Checksum installer
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe
+          if (-not $files) { throw 'installer was not produced' }
+          $lines = foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          $lines | Tee-Object -FilePath nsis-sha256.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: caihongyun-windows-1.0.29
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            nsis-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
