@@ -1,37 +1,59 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
 import { openWebUrl } from './cmds'
-import { PANEL_HOST_TIMEOUT_MS, isHostnameOnly } from './panel-api'
+import {
+  DOWNLOAD_HOSTS,
+  DOWNLOAD_HOST_STORAGE_KEY,
+  PANEL_HOST_TIMEOUT_MS,
+  browserHostStorage,
+  isHostnameOnly,
+  orderHosts,
+  preferDownloadUrl,
+  readPreferredHost,
+  rememberPreferredHost,
+} from './panel-api'
 
 // 桌面版在线更新检查：启动时拉 /version-desktop.json（多域名抗封），
 // 版本比当前高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
 // 但自动提示 + 一键跳下载已能免去人工提醒）。
 // 发版时同步改 CURRENT_VERSION 与 login.tsx 的 APP_VERSION。
-const CURRENT_VERSION = 'v1.0.30'
+// 同目录的 version.json 是安卓清单，字段不同，桌面版不读它。
+const CURRENT_VERSION = 'v1.0.31'
 
-// 更新清单主机。lianjieni.com 优先；yuntanlu 为历史备用。不包含未验证的 lianjieni 子域名。
-const UPDATE_HOSTS = [
-  'lianjieni.com',
-  'p2.yuntanlu.com',
-  'w1.yuntanlu.com',
-  'dl.yuntanlu.com',
-  'w2.yuntanlu.com',
-]
+// 下载站先 down.yuntanlu.com，再 ndl.lianjieni.com，dl.yuntanlu.com 兜底。
+const UPDATE_HOSTS = DOWNLOAD_HOSTS
 
-async function fetchJson(path: string): Promise<any | null> {
-  for (const host of UPDATE_HOSTS) {
+async function fetchUpdate(): Promise<{
+  info: Record<string, unknown>
+  host: string
+} | null> {
+  const storage = browserHostStorage()
+  const preferred = readPreferredHost(
+    storage,
+    UPDATE_HOSTS,
+    DOWNLOAD_HOST_STORAGE_KEY,
+  )
+  for (const host of orderHosts(UPDATE_HOSTS, preferred)) {
     if (!isHostnameOnly(host)) continue
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), PANEL_HOST_TIMEOUT_MS)
     try {
-      const res = await tauriFetch(`https://${host}${path}`, {
+      const res = await tauriFetch(`https://${host}/version-desktop.json`, {
         redirect: 'manual',
         maxRedirections: 0,
         signal: ctrl.signal,
       })
       if (!res.ok) continue
-      const data = await res.json()
-      if (data && typeof data === 'object') return data
+      const data: unknown = await res.json()
+      if (data && typeof data === 'object') {
+        rememberPreferredHost(
+          storage,
+          host,
+          UPDATE_HOSTS,
+          DOWNLOAD_HOST_STORAGE_KEY,
+        )
+        return { info: data as Record<string, unknown>, host }
+      }
     } catch {
       // 换下一条通道。不记录底层异常、响应体或查询串。
     } finally {
@@ -92,13 +114,19 @@ function showModal(version: string, changelog: string, url: string) {
 
 export async function checkDesktopUpdate(): Promise<void> {
   try {
-    const info = await fetchJson('/version-desktop.json')
-    if (!info || !info.version) return
-    if (verNum(info.version) <= verNum(CURRENT_VERSION)) return
+    const found = await fetchUpdate()
+    if (!found || typeof found.info.version !== 'string') return
+    if (verNum(found.info.version) <= verNum(CURRENT_VERSION)) return
     const isMac = /Mac|Macintosh|Mac OS X/i.test(navigator.userAgent)
-    const url = isMac ? info.url_mac || info.url : info.url_win || info.url
+    const raw = isMac
+      ? found.info.url_mac || found.info.url
+      : found.info.url_win || found.info.url
+    if (typeof raw !== 'string' || !raw) return
+    const url = preferDownloadUrl(raw, found.host)
     if (!url) return
-    showModal(info.version, info.changelog || '', url)
+    const changelog =
+      typeof found.info.changelog === 'string' ? found.info.changelog : ''
+    showModal(found.info.version, changelog, url)
   } catch {
     // 更新检查失败静默，不打扰用户
   }

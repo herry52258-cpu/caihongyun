@@ -22,18 +22,18 @@ import { useProxiesData } from '@/providers/app-data-context'
 import {
   calcuProxies,
   getProfiles,
-  importProfile,
   openWebUrl,
   patchProfilesConfig,
   patchVergeConfig,
   updateProfile,
 } from '@/services/cmds'
 import {
-  PANEL_WEB_ORIGIN,
-  isHostnameOnly,
   panelApiFetch,
+  panelPageOrigin,
+  resolvePanelPageUrl,
   safePanelError,
 } from '@/services/panel-api'
+import { importPanelSubscription } from '@/services/panel-subscription'
 import { fetchCacheData } from '@/services/query-client'
 import {
   REFRESH_FAIL_TEXT,
@@ -48,7 +48,6 @@ const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 const INITIAL_LOGGED_IN =
   typeof localStorage !== 'undefined' &&
   !!localStorage.getItem(CAIHONGYUN_INIT_KEY)
-const PANEL = PANEL_WEB_ORIGIN
 
 // 在应用内 WebView 窗口打开（不依赖系统默认浏览器；提权运行时外部打开会"找不到应用程序"）
 const openWindow = async (url: string, label: string, title = '彩虹猫') => {
@@ -80,45 +79,12 @@ const openWindow = async (url: string, label: string, title = '彩虹猫') => {
   }
 }
 
-const openPanel = (hashPath: string) =>
-  openWindow(
-    `${PANEL}/${hashPath}`,
-    `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`,
-  )
+const openPanel = (hashPath: string) => {
+  const label = `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`
+  void resolvePanelPageUrl(hashPath).then((url) => openWindow(url, label))
+}
 
 const AUTH_KEY = 'caihongyun_auth'
-
-// 导入订阅的多通道域名(单条被 GFW 掐 TLS 握手时自动换下一条)。都是同一份订阅,任一成功即可。
-const IMPORT_HOSTS = [
-  'lianjieni.com',
-  'p2.yuntanlu.com',
-  'w1.yuntanlu.com',
-  'w2.yuntanlu.com',
-]
-
-// 多通道导入:只替换订阅 URL 的主机名,路径原样保留。
-// 失败原因只保留主机名,不把订阅路径或底层异常带进错误。
-async function importSubWithFallback(subUrl: string): Promise<void> {
-  const path = subUrl.replace(/^https?:\/\/[^/]+/, '')
-  const attempts: string[] = []
-  if (!path.startsWith('/')) {
-    throw new Error('网络或TLS失败')
-  }
-  for (const host of IMPORT_HOSTS) {
-    if (!isHostnameOnly(host)) continue
-    const base = `https://${host}${path}`
-    const clashUrl = base.includes('?')
-      ? `${base}&flag=verge`
-      : `${base}?flag=verge`
-    try {
-      await importProfile(clashUrl, { with_proxy: false })
-      return
-    } catch {
-      attempts.push(`${host}: 网络或TLS失败`)
-    }
-  }
-  throw new Error(attempts.join('；') || '网络或TLS失败')
-}
 
 // 登录/连接共用:拿订阅链接 → 多通道导入 → 激活刚导入的配置。
 // 返回 true=成功导入并激活。任一步失败向上抛,由调用方决定是否拦截。
@@ -129,7 +95,7 @@ async function ensureSubscription(auth: string): Promise<boolean> {
   const subData = await subRes.json()
   const subUrl = subData.data?.subscribe_url
   if (!subUrl) return false
-  await importSubWithFallback(subUrl)
+  await importPanelSubscription(subUrl)
   const profiles = await getProfiles()
   const items = profiles.items ?? []
   if (items.length > 0) {
@@ -812,7 +778,7 @@ const InviteDialog = ({
     }
   }, [open])
 
-  const link = code ? `${PANEL}/#/register?code=${code}` : ''
+  const link = code ? `${panelPageOrigin()}/#/register?code=${code}` : ''
 
   const copy = async () => {
     if (!link) return

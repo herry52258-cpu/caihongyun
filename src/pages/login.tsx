@@ -4,21 +4,21 @@ import { useNavigate } from 'react-router'
 
 // 猫图打包进 App，不再从 caihongmao.org 远程加载（该域名走 Cloudflare，未连 VPN 时国内常被干扰）
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
-import { importProfile, openWebUrl } from '@/services/cmds'
+import { openWebUrl } from '@/services/cmds'
 import {
-  PANEL_WEB_ORIGIN,
   panelApiFetch,
+  resolvePanelPageUrl,
   safePanelError,
 } from '@/services/panel-api'
+import { importPanelSubscription } from '@/services/panel-subscription'
 
-const APP_VERSION = 'v1.0.30'
-const PANEL = PANEL_WEB_ORIGIN
+const APP_VERSION = 'v1.0.31'
 
 const apiFetch = panelApiFetch
 
 // 在应用内 WebView 窗口打开面板（提权运行时系统浏览器会"找不到应用程序"）
 const openPanel = async (hashPath: string) => {
-  const url = `${PANEL}/${hashPath}`
+  const url = await resolvePanelPageUrl(hashPath)
   const label = `panel-${hashPath.replace(/[^a-zA-Z]/g, '') || 'home'}`
   try {
     const existing = await WebviewWindow.getByLabel(label)
@@ -95,7 +95,7 @@ export default function LoginPage() {
       // 与 Android 一致：仍算登录成功、进首页，由首页显示到期状态并引导购买，
       // 否则用户只看到「网络错误」，会误以为软件坏了。
       try {
-        await importProfile(subUrl, { with_proxy: false })
+        await importPanelSubscription(subUrl)
       } catch {
         // 订阅导入失败（多为套餐到期）：不报错，照常进首页引导续费
       }

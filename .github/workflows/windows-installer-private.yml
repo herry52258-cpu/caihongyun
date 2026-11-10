@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - cursor/china-login-hosts-d73e
+      - cursor/panel-hosts-1.0.31-5143
 
 permissions:
   contents: read
@@ -47,17 +47,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare updater signing key
+        shell: pwsh
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $keyPath = Join-Path (Get-Location) 'updater.key'
+          if ($env:SIGNING_KEY) {
+            Set-Content -Path $keyPath -Value $env:SIGNING_KEY -NoNewline
+            $password = $env:SIGNING_PASSWORD
+          } else {
+            pnpm tauri signer generate --ci --password ci-test -w $keyPath | Out-Null
+            $password = 'ci-test'
+          }
+          "TAURI_SIGNING_PRIVATE_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build Windows installer
         run: pnpm tauri build --target x86_64-pc-windows-msvc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Checksum installer
         shell: pwsh
         run: |
-          $files = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter *.exe
+          $dirs = @(
+            'target/x86_64-pc-windows-msvc/release/bundle/nsis',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
+          )
+          $files = foreach ($dir in $dirs) {
+            if (Test-Path $dir) { Get-ChildItem -Path $dir -Filter *.exe }
+          }
           if (-not $files) { throw 'installer was not produced' }
           $lines = foreach ($f in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
@@ -68,9 +89,10 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: caihongyun-windows-1.0.30
+          name: caihongyun-windows-1.0.31
           path: |
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             nsis-sha256.txt
           if-no-files-found: error
           retention-days: 14
