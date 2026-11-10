@@ -11,7 +11,7 @@ import {
   safePanelError,
 } from '@/services/panel-api'
 
-const APP_VERSION = 'v1.0.29'
+const APP_VERSION = 'v1.0.30'
 const PANEL = PANEL_WEB_ORIGIN
 
 const apiFetch = panelApiFetch

@@ -68,7 +68,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: caihongyun-windows-1.0.29
+          name: caihongyun-windows-1.0.30
           path: |
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             nsis-sha256.txt

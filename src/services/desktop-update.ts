@@ -7,7 +7,7 @@ import { PANEL_HOST_TIMEOUT_MS, isHostnameOnly } from './panel-api'
 // 版本比当前高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
 // 但自动提示 + 一键跳下载已能免去人工提醒）。
 // 发版时同步改 CURRENT_VERSION 与 login.tsx 的 APP_VERSION。
-const CURRENT_VERSION = 'v1.0.29'
+const CURRENT_VERSION = 'v1.0.30'
 
 // 更新清单主机。lianjieni.com 优先；yuntanlu 为历史备用。不包含未验证的 lianjieni 子域名。
 const UPDATE_HOSTS = [

@@ -2,24 +2,25 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  List,
-  ListItemButton,
   Menu,
   MenuItem,
 } from '@mui/material'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 // 猫图打包进 App，不再从 caihongmao.org 远程加载：
 // 该域名走 Cloudflare，未连 VPN 时在国内常被干扰，会导致界面 logo 变成裂图。
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
+import NodePicker from '@/components/home/node-picker'
 import { useCurrentProxy } from '@/hooks/use-current-proxy'
 import { useProfiles } from '@/hooks/use-profiles'
 import { useSystemProxyState } from '@/hooks/use-system-proxy-state'
 import { useProxiesData } from '@/providers/app-data-context'
 import {
+  calcuProxies,
   getProfiles,
   importProfile,
   openWebUrl,
@@ -33,6 +34,15 @@ import {
   panelApiFetch,
   safePanelError,
 } from '@/services/panel-api'
+import { fetchCacheData } from '@/services/query-client'
+import {
+  REFRESH_FAIL_TEXT,
+  createAutoRefreshGate,
+  finishRouteRefresh,
+  selectableNodeNames,
+  type RefreshRoutesResult,
+} from '@/services/refresh-routes'
+import { flagFor } from '@/utils/node-flag'
 
 const CAIHONGYUN_INIT_KEY = 'caihongyun_initialized'
 const INITIAL_LOGGED_IN =
@@ -189,69 +199,6 @@ const buildPlans = (data: unknown[]): PlanItem[] => {
     }
   }
   return out
-}
-
-// ---------- 工具 ----------
-const FLAGS: [string, string][] = [
-  ['香港', '🇭🇰'],
-  ['Hong Kong', '🇭🇰'],
-  ['HK', '🇭🇰'],
-  ['台湾', '🇹🇼'],
-  ['臺灣', '🇹🇼'],
-  ['Taiwan', '🇹🇼'],
-  ['TW', '🇹🇼'],
-  ['日本', '🇯🇵'],
-  ['东京', '🇯🇵'],
-  ['大阪', '🇯🇵'],
-  ['Japan', '🇯🇵'],
-  ['JP', '🇯🇵'],
-  ['新加坡', '🇸🇬'],
-  ['狮城', '🇸🇬'],
-  ['Singapore', '🇸🇬'],
-  ['SG', '🇸🇬'],
-  ['洛杉矶', '🇺🇸'],
-  ['圣何塞', '🇺🇸'],
-  ['硅谷', '🇺🇸'],
-  ['美国', '🇺🇸'],
-  ['United States', '🇺🇸'],
-  ['US', '🇺🇸'],
-  ['首尔', '🇰🇷'],
-  ['韩国', '🇰🇷'],
-  ['Korea', '🇰🇷'],
-  ['KR', '🇰🇷'],
-  ['伦敦', '🇬🇧'],
-  ['英国', '🇬🇧'],
-  ['UK', '🇬🇧'],
-  ['德国', '🇩🇪'],
-  ['Germany', '🇩🇪'],
-  ['DE', '🇩🇪'],
-  ['法国', '🇫🇷'],
-  ['France', '🇫🇷'],
-  ['FR', '🇫🇷'],
-  ['俄罗斯', '🇷🇺'],
-  ['RU', '🇷🇺'],
-  ['印度', '🇮🇳'],
-  ['IN', '🇮🇳'],
-  ['泰国', '🇹🇭'],
-  ['TH', '🇹🇭'],
-  ['马来', '🇲🇾'],
-  ['MY', '🇲🇾'],
-  ['越南', '🇻🇳'],
-  ['VN', '🇻🇳'],
-  ['土耳其', '🇹🇷'],
-  ['TR', '🇹🇷'],
-  ['加拿大', '🇨🇦'],
-  ['CA', '🇨🇦'],
-  ['澳大利亚', '🇦🇺'],
-  ['澳洲', '🇦🇺'],
-  ['AU', '🇦🇺'],
-]
-
-const flagFor = (name: string): string => {
-  for (const [k, v] of FLAGS) {
-    if (name.toLowerCase().includes(k.toLowerCase())) return v
-  }
-  return '🌐'
 }
 
 const fmtGB = (bytes: number): string => {
@@ -440,82 +387,6 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
     </Dialog>
   )
 }
-
-// ---------- 节点选择弹窗 ----------
-const NodePicker = ({
-  open,
-  nodes,
-  current,
-  onSelect,
-  onClose,
-}: {
-  open: boolean
-  nodes: string[]
-  current: string
-  onSelect: (name: string) => void
-  onClose: () => void
-}) => (
-  <Dialog
-    open={open}
-    onClose={onClose}
-    maxWidth="xs"
-    fullWidth
-    sx={{
-      '& .MuiPaper-root': {
-        borderRadius: 3,
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-        color: '#fff',
-      },
-    }}
-  >
-    <DialogTitle sx={{ color: '#fff', fontWeight: 700, fontSize: 18 }}>
-      选择线路
-    </DialogTitle>
-    <DialogContent sx={{ px: 1, pb: 2 }}>
-      <List>
-        {nodes.length === 0 && (
-          <div
-            style={{
-              color: 'rgba(255,255,255,0.5)',
-              textAlign: 'center',
-              padding: 20,
-            }}
-          >
-            暂无可用线路
-          </div>
-        )}
-        {nodes.map((name) => {
-          const active = name === current
-          return (
-            <ListItemButton
-              key={name}
-              onClick={() => onSelect(name)}
-              sx={{
-                borderRadius: 2,
-                mb: 0.5,
-                border: active
-                  ? '1px solid #7c4dff'
-                  : '1px solid rgba(255,255,255,0.08)',
-                background: active ? 'rgba(124,77,255,0.18)' : 'transparent',
-                '&:hover': { background: 'rgba(255,255,255,0.06)' },
-              }}
-            >
-              <span style={{ fontSize: 20, marginRight: 12 }}>
-                {flagFor(name)}
-              </span>
-              <span style={{ flex: 1, fontSize: 15, color: '#fff' }}>
-                {name}
-              </span>
-              {active && (
-                <span style={{ color: '#7c4dff', fontSize: 18 }}>✓</span>
-              )}
-            </ListItemButton>
-          )
-        })}
-      </List>
-    </DialogContent>
-  </Dialog>
-)
 
 // ---------- 原生购买页 ----------
 const PurchaseDialog = ({
@@ -1139,12 +1010,10 @@ const HomePage = () => {
     )
   }, [proxies, primaryGroupName])
 
-  const nodes = useMemo(() => {
-    const all = (group as { all?: unknown[] })?.all ?? []
-    return all
-      .map((n) => (typeof n === 'string' ? n : (n as { name?: string })?.name))
-      .filter((n): n is string => !!n && n !== 'DIRECT' && n !== 'REJECT')
-  }, [group])
+  const nodes = useMemo(
+    () => selectableNodeNames((group as { all?: unknown[] } | null)?.all),
+    [group],
+  )
 
   const currentNode =
     currentProxy?.name || (group as { now?: string })?.now || ''
@@ -1203,19 +1072,92 @@ const HomePage = () => {
     [primaryGroupName, refreshProxy],
   )
 
-  const handleRefreshSub = useCallback(async () => {
-    setMenuAnchor(null)
-    if (!current?.uid || refreshing) return
-    setRefreshing(true)
-    try {
-      await updateProfile(current.uid)
-      await mutateProfiles()
-    } catch {
-      // 忽略
-    } finally {
-      setRefreshing(false)
+  const uid = current?.uid ?? ''
+  const mutateProfilesRef = useRef(mutateProfiles)
+  mutateProfilesRef.current = mutateProfiles
+  const selectionRef = useRef({ group: '', node: '' })
+  selectionRef.current = {
+    group: primaryGroupName ?? '',
+    node: currentNode,
+  }
+  const refreshLockRef = useRef<Promise<RefreshRoutesResult> | null>(null)
+  const autoRefreshGateRef = useRef(createAutoRefreshGate())
+
+  // 复用原来的订阅更新：下载远程配置并热重载内核。
+  // 不调用系统代理开关。原线路还在就选回去，避免刷新把正在用的节点换掉。
+  const refreshRoutes = useCallback(
+    (quiet: boolean) => {
+      if (refreshLockRef.current) return refreshLockRef.current
+      const task = (async (): Promise<RefreshRoutesResult> => {
+        if (!quiet) setMenuAnchor(null)
+        if (!uid) return { ok: false, message: REFRESH_FAIL_TEXT }
+        const { group: groupName, node } = selectionRef.current
+        setRefreshing(true)
+        try {
+          await updateProfile(uid, undefined, quiet)
+          await mutateProfilesRef.current()
+          const { count } = await finishRouteRefresh({
+            previousNode: node,
+            groupName: groupName || null,
+            settleMs: 400,
+            loadProxies: () => fetchCacheData(['getProxies'], calcuProxies),
+            selectNode: async (groupName, nodeName) => {
+              await selectNodeForGroup(groupName, nodeName)
+            },
+          })
+          return { ok: true, count }
+        } catch {
+          return { ok: false, message: REFRESH_FAIL_TEXT }
+        } finally {
+          setRefreshing(false)
+        }
+      })()
+      refreshLockRef.current = task
+      void task.finally(() => {
+        if (refreshLockRef.current === task) refreshLockRef.current = null
+      })
+      return task
+    },
+    [uid],
+  )
+
+  // 已登录就在启动时、以及窗口回到前台时自动刷新一次。60 秒节流，失败不提示。
+  // 只听页面事件不够：Windows 上窗口还看得见时切走再回来，visibilityState 经常一直是
+  // visible，只会发 focus；macOS 的 WKWebView 在窗口隐藏或应用失活时经常不改
+  // visibilityState，focus 也可能漏。Tauri onFocusChanged 听的是系统窗口焦点
+  // （Windows 的 WM_ACTIVATE、macOS 的 windowDidBecomeKey），两边回到前台都会发。
+  useEffect(() => {
+    if (!loggedIn || !uid) return
+    let disposed = false
+    const tryRefresh = () => {
+      if (disposed || !autoRefreshGateRef.current.allow()) return
+      void refreshRoutes(true)
     }
-  }, [current?.uid, refreshing, mutateProfiles])
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tryRefresh()
+    }
+    tryRefresh()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', tryRefresh)
+    let unlisten = () => {}
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) tryRefresh()
+      })
+      .then((stop) => {
+        if (disposed) stop()
+        else unlisten = stop
+      })
+      .catch(() => {
+        // 浏览器里没有 Tauri 窗口
+      })
+    return () => {
+      disposed = true
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', tryRefresh)
+      unlisten()
+    }
+  }, [loggedIn, uid, refreshRoutes])
 
   const handleLogout = useCallback(async () => {
     setMenuAnchor(null)
@@ -1327,7 +1269,10 @@ const HomePage = () => {
           >
             🎁 邀请好友返利
           </MenuItem>
-          <MenuItem onClick={handleRefreshSub}>
+          <MenuItem
+            onClick={() => void refreshRoutes(false)}
+            disabled={refreshing}
+          >
             {refreshing ? '⏳ 刷新中...' : '🔄 刷新订阅'}
           </MenuItem>
           <MenuItem
@@ -1539,11 +1484,14 @@ const HomePage = () => {
       </div>
 
       <NodePicker
+        key={pickerOpen ? 'open' : 'closed'}
         open={pickerOpen}
         nodes={nodes}
         current={currentNode}
+        refreshing={refreshing}
         onSelect={handleSelectNode}
         onClose={() => setPickerOpen(false)}
+        onRefresh={() => refreshRoutes(false)}
       />
 
       <PurchaseDialog
