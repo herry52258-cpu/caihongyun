@@ -103,6 +103,7 @@ async fn perform_profile_update(
     opt: Option<&PrfOption>,
     option: Option<&PrfOption>,
     is_mannual_trigger: bool,
+    notify_failure: bool,
 ) -> Result<bool> {
     logging!(info, Type::Config, "[订阅更新] 开始下载新的订阅内容");
     let mut merged_opt = PrfOption::merge(opt, option);
@@ -180,8 +181,13 @@ async fn perform_profile_update(
         }
     }
 
+    // 手动刷新失败必须把错误交回去。原先这里返回 Ok，界面会显示更新成功，
+    // 而且还会拿旧配置再热重载一次，可能扰动正在用的代理。
     if is_mannual_trigger {
-        handle::Handle::notice_message("update_failed_even_with_clash", format!("{profile_name} - {last_err}"));
+        if notify_failure {
+            handle::Handle::notice_message("update_failed_even_with_clash", format!("{profile_name} - {last_err}"));
+        }
+        return Err(last_err);
     }
     Ok(is_current)
 }
@@ -192,13 +198,15 @@ pub async fn update_profile(
     auto_refresh: bool,
     ignore_auto_update: bool,
     is_mannual_trigger: bool,
+    notify_failure: bool,
 ) -> Result<()> {
     logging!(info, Type::Config, "[订阅更新] 开始更新订阅 {}", uid);
     let url_opt = should_update_profile(uid, ignore_auto_update).await?;
 
     let should_refresh = match url_opt {
         Some((url, opt)) => {
-            perform_profile_update(uid, &url, opt.as_ref(), option, is_mannual_trigger).await? && auto_refresh
+            perform_profile_update(uid, &url, opt.as_ref(), option, is_mannual_trigger, notify_failure).await?
+                && auto_refresh
         }
         None => auto_refresh,
     };
@@ -216,12 +224,23 @@ pub async fn update_profile(
             Ok(outcome) => {
                 let message = outcome.to_string();
                 logging!(error, Type::Config, "[订阅更新] 更新失败: {}", message);
-                handle::Handle::notice_message("update_failed", message);
+                if !is_mannual_trigger || notify_failure {
+                    handle::Handle::notice_message("update_failed", message.clone());
+                }
+                if is_mannual_trigger {
+                    bail!("{message}");
+                }
             }
             Err(err) => {
-                logging!(error, Type::Config, "[订阅更新] 更新失败: {}", err);
-                handle::Handle::notice_message("update_failed", format!("{err}"));
-                logging!(error, Type::Config, "{err}");
+                let message = err.to_string();
+                logging!(error, Type::Config, "[订阅更新] 更新失败: {}", message);
+                if !is_mannual_trigger || notify_failure {
+                    handle::Handle::notice_message("update_failed", message.clone());
+                }
+                logging!(error, Type::Config, "{message}");
+                if is_mannual_trigger {
+                    return Err(err);
+                }
             }
         }
     }

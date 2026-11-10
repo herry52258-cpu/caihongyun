@@ -66,8 +66,16 @@ export async function reorderProfile(activeId: string, overId: string) {
   })
 }
 
-export async function updateProfile(index: string, option?: IProfileOption) {
-  return invoke<void>('update_profile', { index, option })
+export async function updateProfile(
+  index: string,
+  option?: IProfileOption,
+  quiet?: boolean,
+) {
+  return invoke<void>('update_profile', {
+    index,
+    ...(option ? { option } : {}),
+    quiet: quiet === true,
+  })
 }
 
 export async function deleteProfile(index: string) {
