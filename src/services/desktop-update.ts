@@ -5,13 +5,16 @@ import { openWebUrl } from './cmds'
 import {
   DOWNLOAD_HOSTS,
   DOWNLOAD_HOST_STORAGE_KEY,
+  PANEL_API_BUDGET_MS,
+  PANEL_HOST_STAGGER_MS,
   PANEL_HOST_TIMEOUT_MS,
   browserHostStorage,
-  isHostnameOnly,
   orderHosts,
   preferDownloadUrl,
+  raceHosts,
   readPreferredHost,
   rememberPreferredHost,
+  type PanelFailReason,
 } from './panel-api'
 
 // 桌面版在线更新检查：启动时拉 /version-desktop.json（多域名抗封），
@@ -23,6 +26,15 @@ import {
 // 下载站先 down.yuntanlu.com，再 ndl.lianjieni.com，dl.yuntanlu.com 兜底。
 const UPDATE_HOSTS = DOWNLOAD_HOSTS
 
+function updateFailReason(status: number): PanelFailReason {
+  if (Number.isInteger(status) && status >= 300 && status <= 599) {
+    return `HTTP ${status}`
+  }
+  return '非JSON响应'
+}
+
+// 和登录同一套竞速：单机最多 8 秒，1.5 秒没有响应就再开下一个下载站，总共 20 秒。
+// 清单是 GET，直接竞速真正的请求。失败保持安静，不把异常或正文打出来。
 async function fetchUpdate(): Promise<{
   info: Record<string, unknown>
   host: string
@@ -33,34 +45,37 @@ async function fetchUpdate(): Promise<{
     UPDATE_HOSTS,
     DOWNLOAD_HOST_STORAGE_KEY,
   )
-  for (const host of orderHosts(UPDATE_HOSTS, preferred)) {
-    if (!isHostnameOnly(host)) continue
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), PANEL_HOST_TIMEOUT_MS)
-    try {
-      const res = await tauriFetch(`https://${host}/version-desktop.json`, {
-        redirect: 'manual',
-        maxRedirections: 0,
-        signal: ctrl.signal,
-      })
-      if (!res.ok) continue
-      const data: unknown = await res.json()
-      if (data && typeof data === 'object') {
-        rememberPreferredHost(
-          storage,
-          host,
-          UPDATE_HOSTS,
-          DOWNLOAD_HOST_STORAGE_KEY,
-        )
-        return { info: data as Record<string, unknown>, host }
-      }
-    } catch {
-      // 换下一条通道。不记录底层异常、响应体或查询串。
-    } finally {
-      clearTimeout(timer)
-    }
+  try {
+    const found = await raceHosts({
+      hosts: orderHosts(UPDATE_HOSTS, preferred),
+      hostTimeoutMs: PANEL_HOST_TIMEOUT_MS,
+      budgetMs: PANEL_API_BUDGET_MS,
+      staggerMs: PANEL_HOST_STAGGER_MS,
+      log: () => {},
+      attempt: async (host, signal) => {
+        const res = await tauriFetch(`https://${host}/version-desktop.json`, {
+          redirect: 'manual',
+          maxRedirections: 0,
+          signal,
+        })
+        if (!res.ok) return { ok: false, reason: updateFailReason(res.status) }
+        const data: unknown = await res.json()
+        if (!data || typeof data !== 'object') {
+          return { ok: false, reason: '非JSON响应' }
+        }
+        return { ok: true, value: data as Record<string, unknown> }
+      },
+    })
+    rememberPreferredHost(
+      storage,
+      found.host,
+      UPDATE_HOSTS,
+      DOWNLOAD_HOST_STORAGE_KEY,
+    )
+    return { info: found.value, host: found.host }
+  } catch {
+    return null
   }
-  return null
 }
 
 // v1.0.21 -> 10021，便于数值比较
