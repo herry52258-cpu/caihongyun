@@ -1,5 +1,6 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
+import { readAppVersion } from './app-version'
 import { openWebUrl } from './cmds'
 import {
   DOWNLOAD_HOSTS,
@@ -14,11 +15,10 @@ import {
 } from './panel-api'
 
 // 桌面版在线更新检查：启动时拉 /version-desktop.json（多域名抗封），
-// 版本比当前高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
+// 版本比当前安装包高就弹窗提示，点「前往下载」用系统浏览器打开安装包（Win/Mac 需签名故不做全自动装，
 // 但自动提示 + 一键跳下载已能免去人工提醒）。
-// 发版时同步改 CURRENT_VERSION 与 login.tsx 的 APP_VERSION。
+// 当前版本从正在运行的应用读取（Tauri getVersion，预览回退 package.json）。
 // 同目录的 version.json 是安卓清单，字段不同，桌面版不读它。
-const CURRENT_VERSION = 'v1.0.31'
 
 // 下载站先 down.yuntanlu.com，再 ndl.lianjieni.com，dl.yuntanlu.com 兜底。
 const UPDATE_HOSTS = DOWNLOAD_HOSTS
@@ -116,7 +116,8 @@ export async function checkDesktopUpdate(): Promise<void> {
   try {
     const found = await fetchUpdate()
     if (!found || typeof found.info.version !== 'string') return
-    if (verNum(found.info.version) <= verNum(CURRENT_VERSION)) return
+    const current = await readAppVersion()
+    if (verNum(found.info.version) <= verNum(current)) return
     const isMac = /Mac|Macintosh|Mac OS X/i.test(navigator.userAgent)
     const raw = isMac
       ? found.info.url_mac || found.info.url

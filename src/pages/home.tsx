@@ -15,6 +15,7 @@ import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 // 该域名走 Cloudflare，未连 VPN 时在国内常被干扰，会导致界面 logo 变成裂图。
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
 import NodePicker from '@/components/home/node-picker'
+import { useAppVersion } from '@/hooks/use-app-version'
 import { useCurrentProxy } from '@/hooks/use-current-proxy'
 import { useProfiles } from '@/hooks/use-profiles'
 import { useSystemProxyState } from '@/hooks/use-system-proxy-state'
@@ -174,6 +175,7 @@ const fmtGB = (bytes: number): string => {
 
 // ---------- 登录弹窗 ----------
 const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
+  const appVersion = useAppVersion()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -263,6 +265,17 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
             }}
           >
             彩虹猫
+          </div>
+          <div
+            style={{
+              color: 'rgba(255,255,255,0.62)',
+              fontSize: 12,
+              marginTop: 4,
+              letterSpacing: 0.4,
+              textAlign: 'center',
+            }}
+          >
+            {appVersion}
           </div>
           <div
             style={{
@@ -949,6 +962,7 @@ const InviteDialog = ({
 
 // ---------- 主页（一键连接） ----------
 const HomePage = () => {
+  const appVersion = useAppVersion()
   const [loggedIn, setLoggedIn] = useState(INITIAL_LOGGED_IN)
   const { current, mutateProfiles } = useProfiles()
   const { indicator, configState, toggleSystemProxy } = useSystemProxyState()
@@ -1201,6 +1215,16 @@ const HomePage = () => {
             }}
           >
             彩虹猫
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              color: 'rgba(255,255,255,0.45)',
+              letterSpacing: 0.3,
+            }}
+          >
+            {appVersion}
           </span>
         </div>
         <button

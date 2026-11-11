@@ -4,6 +4,7 @@ import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DialogRef, TooltipIcon } from '@/components/base'
+import { useAppVersion } from '@/hooks/use-app-version'
 import { updateLastCheckTime } from '@/hooks/use-update'
 import {
   exitApp,
@@ -15,7 +16,6 @@ import {
 } from '@/services/cmds'
 import { showNotice } from '@/services/notice-service'
 import { checkUpdateSafe as checkUpdate } from '@/services/update'
-import { version } from '@root/package.json'
 
 import { BackupViewer } from './mods/backup-viewer'
 import { ConfigViewer } from './mods/config-viewer'
@@ -33,6 +33,7 @@ interface Props {
 
 const SettingVergeAdvanced = ({ onError: _ }: Props) => {
   const { t } = useTranslation()
+  const appVersion = useAppVersion()
 
   const configRef = useRef<DialogRef>(null)
   const hotkeyRef = useRef<DialogRef>(null)
@@ -65,13 +66,13 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
   }, [])
 
   const copyVersion = useCallback(() => {
-    navigator.clipboard.writeText(`v${version}`).then(() => {
+    navigator.clipboard.writeText(appVersion).then(() => {
       showNotice.success(
         'settings.components.verge.advanced.notifications.versionCopied',
         1000,
       )
     })
-  }, [])
+  }, [appVersion])
 
   return (
     <SettingList title={t('settings.components.verge.advanced.title')}>
@@ -169,7 +170,7 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
           />
         }
       >
-        <Typography sx={{ py: '7px', pr: 1 }}>v{version}</Typography>
+        <Typography sx={{ py: '7px', pr: 1 }}>{appVersion}</Typography>
       </SettingItem>
     </SettingList>
   )

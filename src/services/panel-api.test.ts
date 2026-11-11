@@ -458,8 +458,16 @@ describe('panel API host selection', () => {
     assert.equal(updater.includes('DOWNLOAD_HOSTS'), true)
     assert.equal(login.includes('resolvePanelPageUrl'), true)
     assert.equal(home.includes('resolvePanelPageUrl'), true)
-    assert.equal(login.includes('v1.0.31'), true)
-    assert.equal(updater.includes('v1.0.31'), true)
+    assert.equal(login.includes('useAppVersion'), true)
+    assert.equal(home.includes('useAppVersion'), true)
+    assert.equal(updater.includes('readAppVersion'), true)
+    assert.equal(/['"]v1\.0\.\d+['"]/.test(login), false)
+    assert.equal(/['"]v1\.0\.\d+['"]/.test(home), false)
+    assert.equal(/['"]v1\.0\.\d+['"]/.test(updater), false)
+    assert.equal(
+      JSON.parse(readFileSync('package.json', 'utf8')).version,
+      '1.0.32',
+    )
   })
 
   it('tries a remembered panel host first and then the rest in order', async () => {

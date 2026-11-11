@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 
 // 猫图打包进 App，不再从 caihongmao.org 远程加载（该域名走 Cloudflare，未连 VPN 时国内常被干扰）
 import CAT_LOGO from '@/assets/image/cat-logo.svg'
+import { useAppVersion } from '@/hooks/use-app-version'
 import { openWebUrl } from '@/services/cmds'
 import {
   panelApiFetch,
@@ -11,8 +12,6 @@ import {
   safePanelError,
 } from '@/services/panel-api'
 import { importPanelSubscription } from '@/services/panel-subscription'
-
-const APP_VERSION = 'v1.0.31'
 
 const apiFetch = panelApiFetch
 
@@ -49,6 +48,7 @@ const openPanel = async (hashPath: string) => {
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const appVersion = useAppVersion()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -149,8 +149,19 @@ export default function LoginPage() {
           </h1>
           <p
             style={{
+              color: 'rgba(255,255,255,0.62)',
+              margin: '4px 0 0',
+              fontSize: 12,
+              letterSpacing: 0.4,
+              textAlign: 'center',
+            }}
+          >
+            {appVersion}
+          </p>
+          <p
+            style={{
               color: 'rgba(255,255,255,0.5)',
-              margin: '6px 0 0',
+              margin: '4px 0 0',
               fontSize: 13,
             }}
           >
@@ -236,19 +247,6 @@ export default function LoginPage() {
               }}
             >
               还没有账号？点此注册
-            </span>
-          </div>
-
-          {/* 版本号：便于用户/客服确认安装的是哪个版本 */}
-          <div style={{ textAlign: 'center', marginTop: 6 }}>
-            <span
-              style={{
-                color: 'rgba(255,255,255,0.75)',
-                fontSize: 12,
-                letterSpacing: 0.3,
-              }}
-            >
-              彩虹猫桌面版 {APP_VERSION}
             </span>
           </div>
         </div>
