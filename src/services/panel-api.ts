@@ -1,6 +1,14 @@
-// 面板 API 只走 HTTPS 主机名。lianjieni.com 是国内可访问的主入口；
-// 其后的 yuntanlu 主机是历史备用，不代表复测通过。已否决的旧入口不在此列表。
-export const PANEL_API_HOSTS = [
+// 面板 API 只走 HTTPS 主机名，不写 IP。
+// 新入口指向同一套 Xboard，都在 Cloudflare 后面，按顺序先试。
+// 旧域名只做兜底。已经否决的入口不进列表。
+export const PANEL_WEB_HOSTS = [
+  'nlogin.lianjieni.com',
+  'np1.lianjieni.com',
+  'login.lianjieni.com',
+  'np2.lianjieni.com',
+] as const
+
+export const PANEL_API_FALLBACK_HOSTS = [
   'lianjieni.com',
   'p2.yuntanlu.com',
   'w1.yuntanlu.com',
@@ -8,13 +16,28 @@ export const PANEL_API_HOSTS = [
   'w3.yuntanlu.com',
 ] as const
 
-export const PANEL_WEB_ORIGIN = 'https://lianjieni.com'
+export const PANEL_API_HOSTS = [
+  ...PANEL_WEB_HOSTS,
+  ...PANEL_API_FALLBACK_HOSTS,
+] as const
 
-/** 单主机超时。登录和同一套 API 通道共用这一个常量。 */
-export const PANEL_HOST_TIMEOUT_MS = 2500
+export const PANEL_WEB_ORIGIN = `https://${PANEL_WEB_HOSTS[0]}`
+
+// 下载站。桌面更新清单和安装包都先走这里，dl 只做兜底。
+export const DOWNLOAD_HOSTS = [
+  'down.yuntanlu.com',
+  'ndl.lianjieni.com',
+  'dl.yuntanlu.com',
+] as const
+
+/** 单主机超时。登录、更新检查和同一套 API 通道共用。 */
+export const PANEL_HOST_TIMEOUT_MS = 1200
 
 /** 所有主机加起来的预算，含响应体读取和 JSON 解析。 */
-export const PANEL_API_BUDGET_MS = 10_000
+export const PANEL_API_BUDGET_MS = 12_000
+
+export const PANEL_HOST_STORAGE_KEY = 'caihongyun_panel_host'
+export const DOWNLOAD_HOST_STORAGE_KEY = 'caihongyun_download_host'
 
 const API_PREFIX = '/api/v1'
 
@@ -38,6 +61,11 @@ export type PanelFetch = (
   init: PanelRequestInit,
 ) => Promise<Response>
 
+export type HostStorage = {
+  getItem: (key: string) => string | null
+  setItem: (key: string, value: string) => void
+}
+
 export type PanelApiDeps = {
   fetchImpl?: PanelFetch
   hosts?: readonly string[]
@@ -45,6 +73,7 @@ export type PanelApiDeps = {
   budgetMs?: number
   now?: () => number
   log?: (line: string) => void
+  storage?: HostStorage | null
 }
 
 const REASONS = new Set<string>(['超时', '网络或TLS失败', '非JSON响应'])
@@ -82,6 +111,111 @@ export class PanelRequestError extends Error {
 export function safePanelError(error: unknown): string {
   if (error instanceof PanelRequestError) return error.message
   return '网络或TLS失败'
+}
+
+export function browserHostStorage(): HostStorage | null {
+  try {
+    const storage = globalThis.localStorage
+    if (
+      storage == null ||
+      typeof storage.getItem !== 'function' ||
+      typeof storage.setItem !== 'function'
+    ) {
+      return null
+    }
+    return storage
+  } catch {
+    return null
+  }
+}
+
+export function readPreferredHost(
+  storage: HostStorage | null,
+  allow: readonly string[],
+  key: string,
+): string | null {
+  if (!storage) return null
+  let raw: string | null
+  try {
+    raw = storage.getItem(key)
+  } catch {
+    return null
+  }
+  if (typeof raw !== 'string') return null
+  const host = raw.trim().toLowerCase()
+  if (!isHostnameOnly(host) || !allow.includes(host)) return null
+  return host
+}
+
+export function rememberPreferredHost(
+  storage: HostStorage | null,
+  host: string,
+  allow: readonly string[],
+  key: string,
+): void {
+  if (!storage) return
+  const normalized = host.trim().toLowerCase()
+  if (!isHostnameOnly(normalized) || !allow.includes(normalized)) return
+  try {
+    storage.setItem(key, normalized)
+  } catch {
+    // 记不住就按原顺序试，不影响本次结果。
+  }
+}
+
+export function orderHosts(
+  hosts: readonly string[],
+  preferred: string | null,
+): string[] {
+  const list: string[] = []
+  for (const host of hosts) {
+    if (!isHostnameOnly(host) || list.includes(host)) continue
+    list.push(host)
+  }
+  if (!preferred || !list.includes(preferred)) return list
+  return [preferred, ...list.filter((host) => host !== preferred)]
+}
+
+export function orderedPanelHosts(storage?: HostStorage | null): string[] {
+  const store = storage === undefined ? browserHostStorage() : storage
+  const preferred = readPreferredHost(
+    store,
+    PANEL_API_HOSTS,
+    PANEL_HOST_STORAGE_KEY,
+  )
+  return orderHosts(PANEL_API_HOSTS, preferred)
+}
+
+export function panelPageOrigin(storage?: HostStorage | null): string {
+  const store = storage === undefined ? browserHostStorage() : storage
+  const preferred = readPreferredHost(
+    store,
+    PANEL_WEB_HOSTS,
+    PANEL_HOST_STORAGE_KEY,
+  )
+  return `https://${preferred ?? PANEL_WEB_HOSTS[0]}`
+}
+
+function normalizeHash(hashPath: string): string {
+  if (hashPath.startsWith('#') || hashPath.startsWith('/')) return hashPath
+  return `/${hashPath}`
+}
+
+export function preferDownloadUrl(url: string, host: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return ''
+  }
+  if (parsed.protocol !== 'https:') return ''
+  if (parsed.username || parsed.password) return ''
+  if (!isHostnameOnly(parsed.hostname)) return ''
+  const allow = DOWNLOAD_HOSTS as readonly string[]
+  if (!allow.includes(parsed.hostname)) return parsed.toString()
+  if (!isHostnameOnly(host) || !allow.includes(host)) return parsed.toString()
+  parsed.hostname = host
+  return parsed.toString()
 }
 
 function defaultLog(line: string): void {
@@ -163,7 +297,8 @@ export async function panelApiFetch(
   deps: PanelApiDeps = {},
 ): Promise<Response> {
   const fetchImpl = deps.fetchImpl ?? defaultFetch
-  const hosts = deps.hosts ?? PANEL_API_HOSTS
+  const storage =
+    deps.storage === undefined ? browserHostStorage() : deps.storage
   const hostTimeoutMs = deps.hostTimeoutMs ?? PANEL_HOST_TIMEOUT_MS
   const budgetMs = deps.budgetMs ?? PANEL_API_BUDGET_MS
   const now = deps.now ?? Date.now
@@ -172,11 +307,16 @@ export async function panelApiFetch(
   const attempts: PanelAttempt[] = []
   const apiPath = normalizePath(path)
   const { signal: _callerSignal, ...requestInit } = init
+  const preferred = readPreferredHost(
+    storage,
+    PANEL_API_HOSTS,
+    PANEL_HOST_STORAGE_KEY,
+  )
+  const hosts = orderHosts(deps.hosts ?? PANEL_API_HOSTS, preferred)
 
   for (const host of hosts) {
     const remaining = deadline - now()
     if (remaining <= 0) break
-    if (!isHostnameOnly(host)) continue
 
     const timeoutMs = Math.min(hostTimeoutMs, remaining)
     const ctrl = new AbortController()
@@ -195,6 +335,12 @@ export async function panelApiFetch(
       })
       const text = await readBody(res, ctrl.signal)
       if (parsePanelJson(text)) {
+        rememberPreferredHost(
+          storage,
+          host,
+          PANEL_API_HOSTS,
+          PANEL_HOST_STORAGE_KEY,
+        )
         const status = res.status >= 200 && res.status <= 599 ? res.status : 400
         return new Response(text, {
           status,
@@ -215,4 +361,28 @@ export async function panelApiFetch(
   }
 
   throw new PanelRequestError(attempts)
+}
+
+export async function resolvePanelPageUrl(
+  hashPath: string,
+  deps: PanelApiDeps = {},
+): Promise<string> {
+  try {
+    await panelApiFetch(
+      '/guest/comm/config',
+      {},
+      {
+        fetchImpl: deps.fetchImpl,
+        storage: deps.storage,
+        hostTimeoutMs: deps.hostTimeoutMs,
+        budgetMs: deps.budgetMs,
+        now: deps.now,
+        log: deps.log,
+        hosts: PANEL_WEB_HOSTS,
+      },
+    )
+  } catch {
+    // 新入口都不可用时仍打开第一个新入口，不退回旧域名。
+  }
+  return `${panelPageOrigin(deps.storage)}/${normalizeHash(hashPath)}`
 }

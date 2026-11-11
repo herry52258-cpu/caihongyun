@@ -3,13 +3,19 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 import {
+  DOWNLOAD_HOSTS,
   PANEL_API_BUDGET_MS,
   PANEL_API_HOSTS,
+  PANEL_HOST_STORAGE_KEY,
   PANEL_HOST_TIMEOUT_MS,
+  PANEL_WEB_HOSTS,
   PANEL_WEB_ORIGIN,
   PanelRequestError,
   isHostnameOnly,
   panelApiFetch,
+  preferDownloadUrl,
+  resolvePanelPageUrl,
+  type HostStorage,
   type PanelFetch,
 } from './panel-api.ts'
 
@@ -74,11 +80,30 @@ function assertSafeText(text: string): void {
   assert.equal(text.toLowerCase().includes('bearer'), false)
 }
 
+function memoryStorage(initial: Record<string, string> = {}): HostStorage {
+  const data = { ...initial }
+  return {
+    getItem: (key) => (Object.hasOwn(data, key) ? data[key] : null),
+    setItem: (key, value) => {
+      data[key] = value
+    },
+  }
+}
+
+function mentionsHost(text: string, host: string): boolean {
+  const escaped = host.replace(/[.]/g, '\\.')
+  return new RegExp(`(^|[^a-z0-9-])${escaped}([^a-z0-9-.]|$)`, 'i').test(text)
+}
+
 describe('panel API host selection', () => {
-  it('keeps lianjieni.com first and drops rejected hosts', () => {
+  it('tries the new panel hosts before the old fallbacks', () => {
     assert.deepEqual(
       [...PANEL_API_HOSTS],
       [
+        'nlogin.lianjieni.com',
+        'np1.lianjieni.com',
+        'login.lianjieni.com',
+        'np2.lianjieni.com',
         'lianjieni.com',
         'p2.yuntanlu.com',
         'w1.yuntanlu.com',
@@ -86,9 +111,18 @@ describe('panel API host selection', () => {
         'w3.yuntanlu.com',
       ],
     )
-    assert.equal(PANEL_WEB_ORIGIN, 'https://lianjieni.com')
-    assert.equal(PANEL_HOST_TIMEOUT_MS, 2500)
-    assert.equal(PANEL_API_BUDGET_MS, 10_000)
+    assert.deepEqual(
+      [...DOWNLOAD_HOSTS],
+      ['down.yuntanlu.com', 'ndl.lianjieni.com', 'dl.yuntanlu.com'],
+    )
+    assert.equal(PANEL_WEB_ORIGIN, 'https://nlogin.lianjieni.com')
+    assert.equal(PANEL_HOST_TIMEOUT_MS, 1200)
+    assert.equal(PANEL_API_BUDGET_MS, 12_000)
+    assert.ok(
+      PANEL_API_BUDGET_MS >= PANEL_API_HOSTS.length * PANEL_HOST_TIMEOUT_MS,
+    )
+    for (const host of PANEL_API_HOSTS) assert.equal(isHostnameOnly(host), true)
+    for (const host of DOWNLOAD_HOSTS) assert.equal(isHostnameOnly(host), true)
     assert.equal(PANEL_API_HOSTS.includes('p1.yuntanlu.com' as never), false)
     assert.equal(isHostnameOnly('203.0.113.10'), false)
     assert.equal(isHostnameOnly('http://lianjieni.com'), false)
@@ -109,7 +143,7 @@ describe('panel API host selection', () => {
     assert.equal(calls.length, 1)
     assert.equal(
       calls[0].url,
-      'https://lianjieni.com/api/v1/passport/auth/login',
+      'https://nlogin.lianjieni.com/api/v1/passport/auth/login',
     )
     assert.equal(calls[0].init.redirect, 'manual')
     assert.equal(calls[0].init.maxRedirections, 0)
@@ -130,7 +164,7 @@ describe('panel API host selection', () => {
     assert.equal(calls.length, 2)
     assert.equal(
       calls[1].url,
-      'https://p2.yuntanlu.com/api/v1/passport/auth/login',
+      'https://np1.lianjieni.com/api/v1/passport/auth/login',
     )
     assert.equal(data.data.auth_data, 'fallback')
   })
@@ -151,7 +185,7 @@ describe('panel API host selection', () => {
     const data = await res.json()
     assert.equal(calls.length, 2)
     assert.equal(data.data.auth_data, 'fallback')
-    assert.deepEqual(logs, ['lianjieni.com: 网络或TLS失败'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: 网络或TLS失败'])
     assertSafeText(logs.join('\n'))
   })
 
@@ -168,7 +202,7 @@ describe('panel API host selection', () => {
     )
     assert.equal((await res.json()).data.auth_data, 'fallback')
     assert.equal(calls.length, 2)
-    assert.deepEqual(logs, ['lianjieni.com: HTTP 502'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: HTTP 502'])
     assertSafeText(logs.join('\n'))
   })
 
@@ -189,7 +223,7 @@ describe('panel API host selection', () => {
     const data = await res.json()
     assert.equal(calls.length, 2)
     assert.equal(data.data.subscribe_url, 'https://lianjieni.com/s/example')
-    assert.deepEqual(logs, ['lianjieni.com: 非JSON响应'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: 非JSON响应'])
   })
 
   it('shows a JSON business rejection immediately and does not try another host', async () => {
@@ -397,6 +431,7 @@ describe('panel API host selection', () => {
       'p1.lianjieni.com',
       'p2.lianjieni.com',
       'dl.lianjieni.com',
+      'my.caihongmao.org',
       'tongspa.com',
       '直连 IP',
       '8080',
@@ -404,14 +439,166 @@ describe('panel API host selection', () => {
     for (const file of files) {
       const text = readFileSync(file, 'utf8')
       for (const word of banned) {
-        assert.equal(text.includes(word), false, `${file} contains ${word}`)
+        assert.equal(
+          mentionsHost(text, word),
+          false,
+          `${file} contains ${word}`,
+        )
       }
       assert.equal(/\b\d{1,3}(?:\.\d{1,3}){3}\b/.test(text), false, file)
     }
     const api = readFileSync('src/services/panel-api.ts', 'utf8')
     const updater = readFileSync('src/services/desktop-update.ts', 'utf8')
+    const login = readFileSync('src/pages/login.tsx', 'utf8')
+    const home = readFileSync('src/pages/home.tsx', 'utf8')
     assert.equal(api.includes('http://'), false)
     assert.equal(updater.includes('http://'), false)
-    assert.equal(api.includes('lianjieni.com'), true)
+    assert.equal(api.includes('nlogin.lianjieni.com'), true)
+    assert.equal(updater.includes('version-desktop.json'), true)
+    assert.equal(updater.includes('DOWNLOAD_HOSTS'), true)
+    assert.equal(login.includes('resolvePanelPageUrl'), true)
+    assert.equal(home.includes('resolvePanelPageUrl'), true)
+    assert.equal(login.includes('v1.0.31'), true)
+    assert.equal(updater.includes('v1.0.31'), true)
+  })
+
+  it('tries a remembered panel host first and then the rest in order', async () => {
+    const storage = memoryStorage({
+      [PANEL_HOST_STORAGE_KEY]: 'login.lianjieni.com',
+    })
+    const { fetchImpl, calls } = scripted([
+      async () => {
+        throw new Error('down')
+      },
+      async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
+    ])
+    const res = await panelApiFetch(
+      '/passport/auth/login',
+      {},
+      { fetchImpl, storage },
+    )
+    assert.equal((await res.json()).data.auth_data, 'ok')
+    assert.equal(
+      calls[0].url,
+      'https://login.lianjieni.com/api/v1/passport/auth/login',
+    )
+    assert.equal(
+      calls[1].url,
+      'https://nlogin.lianjieni.com/api/v1/passport/auth/login',
+    )
+    assert.equal(
+      storage.getItem(PANEL_HOST_STORAGE_KEY),
+      'nlogin.lianjieni.com',
+    )
+  })
+
+  it('ignores a stored address and a rejected host', async () => {
+    const storage = memoryStorage({
+      [PANEL_HOST_STORAGE_KEY]: '203.0.113.10',
+    })
+    const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
+    ])
+    await panelApiFetch('/passport/auth/login', {}, { fetchImpl, storage })
+    assert.equal(
+      calls[0].url,
+      'https://nlogin.lianjieni.com/api/v1/passport/auth/login',
+    )
+    storage.setItem(PANEL_HOST_STORAGE_KEY, 'p1.yuntanlu.com')
+    const second = scripted([
+      async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
+    ])
+    await panelApiFetch(
+      '/passport/auth/login',
+      {},
+      { fetchImpl: second.fetchImpl, storage },
+    )
+    assert.equal(
+      second.calls[0].url,
+      'https://nlogin.lianjieni.com/api/v1/passport/auth/login',
+    )
+    assert.equal(second.calls[0].url.includes('203.0.113.10'), false)
+  })
+
+  it('does not remember a host outside the panel list', async () => {
+    const storage = memoryStorage()
+    const { fetchImpl } = scripted([
+      async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
+    ])
+    await panelApiFetch(
+      '/passport/auth/login',
+      {},
+      { fetchImpl, storage, hosts: ['a.example'] },
+    )
+    assert.equal(storage.getItem(PANEL_HOST_STORAGE_KEY), null)
+  })
+
+  it('opens register and forgot-password on a new panel host', async () => {
+    const storage = memoryStorage()
+    const calls: string[] = []
+    const fetchImpl: PanelFetch = (url) => {
+      calls.push(url)
+      return Promise.reject(new Error('down'))
+    }
+    const registerUrl = await resolvePanelPageUrl('#/register', {
+      fetchImpl,
+      storage,
+      hostTimeoutMs: 20,
+      budgetMs: 5_000,
+    })
+    assert.equal(registerUrl, 'https://nlogin.lianjieni.com/#/register')
+    assert.equal(registerUrl.includes('p1.'), false)
+    assert.equal(
+      calls[0],
+      'https://nlogin.lianjieni.com/api/v1/guest/comm/config',
+    )
+    assert.equal(calls.length, PANEL_WEB_HOSTS.length)
+    assert.equal(
+      calls.some((item) => item.includes('p1.yuntanlu.com')),
+      false,
+    )
+
+    const working = memoryStorage()
+    const forgetUrl = await resolvePanelPageUrl('#/forget', {
+      fetchImpl: (url) =>
+        url.startsWith('https://nlogin.lianjieni.com/')
+          ? Promise.reject(new Error('down'))
+          : Promise.resolve(jsonResponse(200, { data: { ok: true } })),
+      storage: working,
+    })
+    assert.equal(forgetUrl, 'https://np1.lianjieni.com/#/forget')
+    assert.equal(working.getItem(PANEL_HOST_STORAGE_KEY), 'np1.lianjieni.com')
+  })
+
+  it('rewrites download links onto the host that answered', () => {
+    assert.equal(
+      preferDownloadUrl(
+        'https://dl.yuntanlu.com/downloads/caihongmao-windows-v1.0.30.exe',
+        'down.yuntanlu.com',
+      ),
+      'https://down.yuntanlu.com/downloads/caihongmao-windows-v1.0.30.exe',
+    )
+    assert.equal(
+      preferDownloadUrl(
+        'https://dl.yuntanlu.com/downloads/a.exe',
+        'ndl.lianjieni.com',
+      ),
+      'https://ndl.lianjieni.com/downloads/a.exe',
+    )
+    assert.equal(
+      preferDownloadUrl(
+        'https://203.0.113.10/downloads/a.exe',
+        'down.yuntanlu.com',
+      ),
+      '',
+    )
+    assert.equal(
+      preferDownloadUrl('http://down.yuntanlu.com/a.exe', 'ndl.lianjieni.com'),
+      '',
+    )
+    assert.equal(
+      preferDownloadUrl('https://dl.yuntanlu.com/a.exe', '203.0.113.10'),
+      'https://dl.yuntanlu.com/a.exe',
+    )
   })
 })
