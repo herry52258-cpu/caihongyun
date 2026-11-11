@@ -16,9 +16,11 @@ export const PANEL_API_FALLBACK_HOSTS = [
   'w3.yuntanlu.com',
 ] as const
 
+// k7m2 只加在整表末尾，URL 仍是 https://主机/api/v1/...，不插队、不加 p1。
 export const PANEL_API_HOSTS = [
   ...PANEL_WEB_HOSTS,
   ...PANEL_API_FALLBACK_HOSTS,
+  'k7m2.lianjieni.com',
 ] as const
 
 export const PANEL_WEB_ORIGIN = `https://${PANEL_WEB_HOSTS[0]}`
@@ -30,11 +32,17 @@ export const DOWNLOAD_HOSTS = [
   'dl.yuntanlu.com',
 ] as const
 
-/** 单主机超时。登录、更新检查和同一套 API 通道共用。 */
-export const PANEL_HOST_TIMEOUT_MS = 1200
+/**
+ * 单主机超时。国内实测经常 1.4–2.3 秒，偶发超过 7 秒。
+ * 登录、更新检查和同一套 API 通道共用。
+ */
+export const PANEL_HOST_TIMEOUT_MS = 8_000
 
-/** 所有主机加起来的预算，含响应体读取和 JSON 解析。 */
-export const PANEL_API_BUDGET_MS = 12_000
+/** 上一条还没答话时，最多再等这么久就并行开下一条。 */
+export const PANEL_HOST_STAGGER_MS = 1_500
+
+/** 全部线路一起竞速的总预算，含响应体读取和 JSON 解析。 */
+export const PANEL_API_BUDGET_MS = 20_000
 
 export const PANEL_HOST_STORAGE_KEY = 'caihongyun_panel_host'
 export const DOWNLOAD_HOST_STORAGE_KEY = 'caihongyun_download_host'
@@ -71,10 +79,15 @@ export type PanelApiDeps = {
   hosts?: readonly string[]
   hostTimeoutMs?: number
   budgetMs?: number
+  staggerMs?: number
   now?: () => number
   log?: (line: string) => void
   storage?: HostStorage | null
 }
+
+export type HostAttemptResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: PanelFailReason }
 
 const REASONS = new Set<string>(['超时', '网络或TLS失败', '非JSON响应'])
 
@@ -283,6 +296,13 @@ function httpReason(status: number): PanelFailReason {
   return '非JSON响应'
 }
 
+const WINNER_REASON = 'winner'
+
+function isSafeMethod(method: string | undefined): boolean {
+  const normalized = (method ?? 'GET').toUpperCase()
+  return normalized === 'GET' || normalized === 'HEAD'
+}
+
 async function defaultFetch(
   url: string,
   init: PanelRequestInit,
@@ -290,6 +310,190 @@ async function defaultFetch(
   const { fetch } = await import('@tauri-apps/plugin-http')
   return fetch(url, init)
 }
+
+async function requestPanelHost(
+  fetchImpl: PanelFetch,
+  host: string,
+  path: string,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<HostAttemptResult<Response>> {
+  const res = await fetchImpl(`https://${host}${API_PREFIX}${path}`, {
+    ...init,
+    redirect: 'manual',
+    maxRedirections: 0,
+    signal,
+  })
+  const text = await readBody(res, signal)
+  if (!parsePanelJson(text)) {
+    return { ok: false, reason: httpReason(res.status) }
+  }
+  const status = res.status >= 200 && res.status <= 599 ? res.status : 400
+  return {
+    ok: true,
+    value: new Response(text, {
+      status,
+      headers: { 'content-type': 'application/json' },
+    }),
+  }
+}
+
+export type RaceHostsOptions<T> = {
+  hosts: readonly string[]
+  attempt: (host: string, signal: AbortSignal) => Promise<HostAttemptResult<T>>
+  hostTimeoutMs?: number
+  budgetMs?: number
+  staggerMs?: number
+  now?: () => number
+  log?: (line: string) => void
+  /** 失败记在这里。调用方可以跨多次竞速累加，成功返回时里面只有没答话的主机。 */
+  attempts?: PanelAttempt[]
+}
+
+/**
+ * Happy Eyeballs：先开第一台；1.5 秒还没答话就再开下一台。
+ * 某台先失败（超时、TLS、非 JSON）就立刻补上下一台，不必把 1.5 秒等完。
+ * 第一份成功结果胜出，其余请求 abort。总预算到点后不再开新的。
+ * 面板 JSON（含密码错误这类 4xx）由 attempt 标成成功，不能当成线路失败。
+ */
+export function raceHosts<T>(
+  options: RaceHostsOptions<T>,
+): Promise<{ host: string; value: T }> {
+  const hostTimeoutMs = options.hostTimeoutMs ?? PANEL_HOST_TIMEOUT_MS
+  const budgetMs = options.budgetMs ?? PANEL_API_BUDGET_MS
+  const staggerMs = options.staggerMs ?? PANEL_HOST_STAGGER_MS
+  const now = options.now ?? Date.now
+  const log = options.log ?? defaultLog
+  const attempts = options.attempts ?? []
+  const hosts = options.hosts.filter(
+    (host, index, list) => isHostnameOnly(host) && list.indexOf(host) === index,
+  )
+  const deadline = now() + budgetMs
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let cursor = 0
+    let inflight = 0
+    let staggerTimer: ReturnType<typeof setTimeout> | null = null
+    const controllers = new Set<AbortController>()
+
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      if (staggerTimer !== null) {
+        clearTimeout(staggerTimer)
+        staggerTimer = null
+      }
+      fn()
+    }
+
+    const succeed = (host: string, value: T, keep: AbortController) => {
+      finish(() => {
+        for (const ctrl of controllers) {
+          if (ctrl !== keep && !ctrl.signal.aborted) ctrl.abort(WINNER_REASON)
+        }
+        resolve({ host, value })
+      })
+    }
+
+    const giveUp = () => {
+      finish(() => {
+        for (const ctrl of controllers) {
+          if (!ctrl.signal.aborted) ctrl.abort()
+        }
+        reject(new PanelRequestError(attempts))
+      })
+    }
+
+    const armStagger = () => {
+      if (settled || staggerTimer !== null || cursor >= hosts.length) return
+      const remaining = deadline - now()
+      if (remaining <= 0) return
+      const delay = Math.min(staggerMs, remaining)
+      staggerTimer = setTimeout(() => {
+        staggerTimer = null
+        launch()
+      }, delay)
+    }
+
+    const onAttemptEnd = () => {
+      inflight -= 1
+      if (settled) return
+      if (inflight === 0 && (cursor >= hosts.length || deadline - now() <= 0)) {
+        giveUp()
+      }
+    }
+
+    const pullForward = () => {
+      if (settled) return
+      if (staggerTimer !== null) {
+        clearTimeout(staggerTimer)
+        staggerTimer = null
+        launch()
+        return
+      }
+      if (inflight === 0 && (cursor >= hosts.length || deadline - now() <= 0)) {
+        giveUp()
+      }
+    }
+
+    const launch = () => {
+      if (settled) return
+      if (cursor >= hosts.length || deadline - now() <= 0) {
+        if (inflight === 0) giveUp()
+        return
+      }
+      const host = hosts[cursor]
+      cursor += 1
+      const timeoutMs = Math.min(hostTimeoutMs, deadline - now())
+      const ctrl = new AbortController()
+      controllers.add(ctrl)
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        ctrl.abort()
+      }, timeoutMs)
+      inflight += 1
+      armStagger()
+
+      void Promise.resolve()
+        .then(() => options.attempt(host, ctrl.signal))
+        .then(
+          (result) => {
+            clearTimeout(timer)
+            if (settled || ctrl.signal.reason === WINNER_REASON) return
+            if (result.ok) {
+              succeed(host, result.value, ctrl)
+              return
+            }
+            record(attempts, log, host, result.reason)
+            pullForward()
+          },
+          () => {
+            clearTimeout(timer)
+            if (settled || ctrl.signal.reason === WINNER_REASON) return
+            record(
+              attempts,
+              log,
+              host,
+              timedOut || ctrl.signal.aborted ? '超时' : '网络或TLS失败',
+            )
+            pullForward()
+          },
+        )
+        .finally(onAttemptEnd)
+    }
+
+    launch()
+  })
+}
+
+// 登录 POST 可以并行（幂等），但同一通道还要下单、取消订单。
+// 那些 POST 打两遍会出问题，所以改状态的请求不竞速正文：
+// 先用无副作用的 GET /guest/comm/config 做上面的竞速，
+// 只有先返回面板 JSON 的那一台收到真正的请求。
+// GET/HEAD 没有副作用，直接竞速真正的请求，避免慢链路上再多一个往返。
+const PROBE_PATH = '/guest/comm/config'
 
 export async function panelApiFetch(
   path: string,
@@ -301,10 +505,10 @@ export async function panelApiFetch(
     deps.storage === undefined ? browserHostStorage() : deps.storage
   const hostTimeoutMs = deps.hostTimeoutMs ?? PANEL_HOST_TIMEOUT_MS
   const budgetMs = deps.budgetMs ?? PANEL_API_BUDGET_MS
+  const staggerMs = deps.staggerMs ?? PANEL_HOST_STAGGER_MS
   const now = deps.now ?? Date.now
   const log = deps.log ?? defaultLog
   const deadline = now() + budgetMs
-  const attempts: PanelAttempt[] = []
   const apiPath = normalizePath(path)
   const { signal: _callerSignal, ...requestInit } = init
   const preferred = readPreferredHost(
@@ -313,50 +517,80 @@ export async function panelApiFetch(
     PANEL_HOST_STORAGE_KEY,
   )
   const hosts = orderHosts(deps.hosts ?? PANEL_API_HOSTS, preferred)
+  const raceBase = {
+    hostTimeoutMs,
+    staggerMs,
+    now,
+    log,
+  }
 
-  for (const host of hosts) {
-    const remaining = deadline - now()
-    if (remaining <= 0) break
+  const remember = (host: string) => {
+    rememberPreferredHost(
+      storage,
+      host,
+      PANEL_API_HOSTS,
+      PANEL_HOST_STORAGE_KEY,
+    )
+  }
 
-    const timeoutMs = Math.min(hostTimeoutMs, remaining)
-    const ctrl = new AbortController()
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      ctrl.abort()
-    }, timeoutMs)
+  if (isSafeMethod(requestInit.method)) {
+    const found = await raceHosts({
+      ...raceBase,
+      hosts,
+      budgetMs,
+      attempt: (host, signal) =>
+        requestPanelHost(fetchImpl, host, apiPath, requestInit, signal),
+    })
+    remember(found.host)
+    return found.value
+  }
 
+  const attempts: PanelAttempt[] = []
+  const failed = () => new Set(attempts.map((item) => item.host))
+
+  while (deadline - now() > 0) {
+    const candidates = hosts.filter((host) => !failed().has(host))
+    if (candidates.length === 0) break
+    let winner: { host: string; value: Response }
     try {
-      const res = await fetchImpl(`https://${host}${API_PREFIX}${apiPath}`, {
-        ...requestInit,
-        redirect: 'manual',
-        maxRedirections: 0,
-        signal: ctrl.signal,
-      })
-      const text = await readBody(res, ctrl.signal)
-      if (parsePanelJson(text)) {
-        rememberPreferredHost(
-          storage,
-          host,
-          PANEL_API_HOSTS,
-          PANEL_HOST_STORAGE_KEY,
-        )
-        const status = res.status >= 200 && res.status <= 599 ? res.status : 400
-        return new Response(text, {
-          status,
-          headers: { 'content-type': 'application/json' },
-        })
-      }
-      record(attempts, log, host, httpReason(res.status))
-    } catch {
-      record(
+      winner = await raceHosts({
+        ...raceBase,
+        hosts: candidates,
+        budgetMs: deadline - now(),
         attempts,
-        log,
-        host,
-        timedOut || ctrl.signal.aborted ? '超时' : '网络或TLS失败',
-      )
-    } finally {
-      clearTimeout(timer)
+        attempt: (host, signal) =>
+          requestPanelHost(
+            fetchImpl,
+            host,
+            PROBE_PATH,
+            { method: 'GET' },
+            signal,
+          ),
+      })
+    } catch (error) {
+      if (error instanceof PanelRequestError) throw error
+      throw new PanelRequestError(attempts)
+    }
+
+    if (deadline - now() <= 0) {
+      record(attempts, log, winner.host, '超时')
+      break
+    }
+    try {
+      const posted = await raceHosts({
+        ...raceBase,
+        hosts: [winner.host],
+        budgetMs: deadline - now(),
+        attempts,
+        attempt: (host, signal) =>
+          requestPanelHost(fetchImpl, host, apiPath, requestInit, signal),
+      })
+      remember(posted.host)
+      return posted.value
+    } catch (error) {
+      if (!(error instanceof PanelRequestError)) {
+        record(attempts, log, winner.host, '网络或TLS失败')
+      }
     }
   }
 
@@ -376,6 +610,7 @@ export async function resolvePanelPageUrl(
         storage: deps.storage,
         hostTimeoutMs: deps.hostTimeoutMs,
         budgetMs: deps.budgetMs,
+        staggerMs: deps.staggerMs,
         now: deps.now,
         log: deps.log,
         hosts: PANEL_WEB_HOSTS,

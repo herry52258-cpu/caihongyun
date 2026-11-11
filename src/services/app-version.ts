@@ -5,7 +5,7 @@ import { version as packageVersion } from '@root/package.json'
 /** package.json 版本。Tauri 不可用时（浏览器预览）用它，正式包以 getVersion 为准。 */
 export const PACKAGE_VERSION = packageVersion
 
-/** 显示成 v1.0.32。getVersion 与 package.json 都不带 v 前缀。 */
+/** 显示成 v1.0.33。getVersion 与 package.json 都不带 v 前缀。 */
 export function formatAppVersion(raw: string): string {
   const normalized = raw.trim().replace(/^v/i, '')
   return normalized ? `v${normalized}` : ''

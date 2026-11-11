@@ -6,6 +6,7 @@ import {
   DOWNLOAD_HOSTS,
   PANEL_API_BUDGET_MS,
   PANEL_API_HOSTS,
+  PANEL_HOST_STAGGER_MS,
   PANEL_HOST_STORAGE_KEY,
   PANEL_HOST_TIMEOUT_MS,
   PANEL_WEB_HOSTS,
@@ -109,17 +110,24 @@ describe('panel API host selection', () => {
         'w1.yuntanlu.com',
         'w2.yuntanlu.com',
         'w3.yuntanlu.com',
+        'k7m2.lianjieni.com',
       ],
+    )
+    assert.equal(
+      PANEL_API_HOSTS[PANEL_API_HOSTS.length - 1],
+      'k7m2.lianjieni.com',
     )
     assert.deepEqual(
       [...DOWNLOAD_HOSTS],
       ['down.yuntanlu.com', 'ndl.lianjieni.com', 'dl.yuntanlu.com'],
     )
     assert.equal(PANEL_WEB_ORIGIN, 'https://nlogin.lianjieni.com')
-    assert.equal(PANEL_HOST_TIMEOUT_MS, 1200)
-    assert.equal(PANEL_API_BUDGET_MS, 12_000)
+    assert.equal(PANEL_HOST_TIMEOUT_MS, 8_000)
+    assert.equal(PANEL_HOST_STAGGER_MS, 1_500)
+    assert.equal(PANEL_API_BUDGET_MS, 20_000)
     assert.ok(
-      PANEL_API_BUDGET_MS >= PANEL_API_HOSTS.length * PANEL_HOST_TIMEOUT_MS,
+      PANEL_HOST_STAGGER_MS * (PANEL_API_HOSTS.length - 1) <
+        PANEL_API_BUDGET_MS,
     )
     for (const host of PANEL_API_HOSTS) assert.equal(isHostnameOnly(host), true)
     for (const host of DOWNLOAD_HOSTS) assert.equal(isHostnameOnly(host), true)
@@ -131,6 +139,7 @@ describe('panel API host selection', () => {
 
   it('returns the first host when it sends panel JSON', async () => {
     const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { ok: true } }),
       async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
       async () => jsonResponse(200, { data: { auth_data: 'second' } }),
     ])
@@ -140,32 +149,50 @@ describe('panel API host selection', () => {
       { fetchImpl },
     )
     const data = await res.json()
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
     assert.equal(
       calls[0].url,
+      'https://nlogin.lianjieni.com/api/v1/guest/comm/config',
+    )
+    assert.equal(calls[0].init.method, 'GET')
+    assert.equal(calls[0].init.body, undefined)
+    assert.equal(
+      calls[1].url,
       'https://nlogin.lianjieni.com/api/v1/passport/auth/login',
     )
-    assert.equal(calls[0].init.redirect, 'manual')
-    assert.equal(calls[0].init.maxRedirections, 0)
+    assert.equal(calls[1].init.method, 'POST')
+    assert.equal(calls[1].init.redirect, 'manual')
+    assert.equal(calls[1].init.maxRedirections, 0)
     assert.equal(data.data.auth_data, 'ok')
   })
 
   it('fails over when the first host times out', async () => {
     const { fetchImpl, calls } = scripted([
       (_url, init) => hang(init.signal),
+      async () => jsonResponse(200, { data: { ok: true } }),
       async () => jsonResponse(200, { data: { auth_data: 'fallback' } }),
     ])
     const res = await panelApiFetch(
       '/passport/auth/login',
       { method: 'POST' },
-      { fetchImpl, hostTimeoutMs: 30, budgetMs: 5_000 },
+      { fetchImpl, hostTimeoutMs: 30, budgetMs: 5_000, staggerMs: 5_000 },
     )
     const data = await res.json()
-    assert.equal(calls.length, 2)
+    assert.equal(calls.length, 3)
+    assert.equal(
+      calls[0].url,
+      'https://nlogin.lianjieni.com/api/v1/guest/comm/config',
+    )
     assert.equal(
       calls[1].url,
+      'https://np1.lianjieni.com/api/v1/guest/comm/config',
+    )
+    assert.equal(
+      calls[2].url,
       'https://np1.lianjieni.com/api/v1/passport/auth/login',
     )
+    assert.equal(calls[0].init.method, 'GET')
+    assert.equal(calls[2].init.method, 'POST')
     assert.equal(data.data.auth_data, 'fallback')
   })
 
@@ -228,6 +255,7 @@ describe('panel API host selection', () => {
 
   it('shows a JSON business rejection immediately and does not try another host', async () => {
     const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { ok: true } }),
       async () => jsonResponse(422, { message: '邮箱或密码错误' }),
       async () => jsonResponse(200, { data: { auth_data: 'should-not-run' } }),
     ])
@@ -244,13 +272,16 @@ describe('panel API host selection', () => {
     assert.equal(res.ok, false)
     assert.equal(res.status, 422)
     assert.equal(data.message, '邮箱或密码错误')
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
     assert.deepEqual(logs, [])
-    assert.equal(JSON.stringify(calls[0].init).includes(PASSWORD), true)
+    assert.equal(calls[0].init.body, undefined)
+    assert.equal(JSON.stringify(calls[1].init).includes(PASSWORD), true)
+    assert.equal(calls.filter((call) => call.init.method === 'POST').length, 1)
   })
 
   it('does not retry a banned-account JSON body', async () => {
     const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { ok: true } }),
       async () =>
         jsonResponse(200, { status: 'fail', message: '该账户已被停用' }),
       async () => jsonResponse(200, { data: { auth_data: 'nope' } }),
@@ -261,7 +292,7 @@ describe('panel API host selection', () => {
       { fetchImpl },
     )
     const data = await res.json()
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
     assert.equal(data.message, '该账户已被停用')
   })
 
@@ -407,15 +438,24 @@ describe('panel API host selection', () => {
     }
     await panelApiFetch(
       '/passport/auth/login',
-      {},
+      { method: 'POST', body: '{}' },
       {
         fetchImpl,
         hosts: ['203.0.113.10', 'http://lianjieni.com', 'lianjieni.com'],
       },
     )
     assert.deepEqual(calls, [
+      'https://lianjieni.com/api/v1/guest/comm/config',
       'https://lianjieni.com/api/v1/passport/auth/login',
     ])
+    assert.equal(
+      calls.some((url) => url.includes('203.0.113.10')),
+      false,
+    )
+    assert.equal(
+      calls.some((url) => url.startsWith('http://')),
+      false,
+    )
   })
 
   it('does not embed rejected hosts or origin addresses in the client sources', () => {
@@ -461,12 +501,23 @@ describe('panel API host selection', () => {
     assert.equal(login.includes('useAppVersion'), true)
     assert.equal(home.includes('useAppVersion'), true)
     assert.equal(updater.includes('readAppVersion'), true)
+    assert.equal(updater.includes('raceHosts'), true)
+    assert.equal(api.includes('raceHosts'), true)
+    assert.equal(api.includes('k7m2.lianjieni.com'), true)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(login), false)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(home), false)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(updater), false)
     assert.equal(
       JSON.parse(readFileSync('package.json', 'utf8')).version,
-      '1.0.32',
+      '1.0.33',
+    )
+    assert.equal(
+      JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).version,
+      '1.0.33',
+    )
+    assert.match(
+      readFileSync('src-tauri/Cargo.toml', 'utf8'),
+      /^version = "1.0.33"$/m,
     )
   })
 
@@ -483,7 +534,7 @@ describe('panel API host selection', () => {
     const res = await panelApiFetch(
       '/passport/auth/login',
       {},
-      { fetchImpl, storage },
+      { fetchImpl, storage, staggerMs: 5_000 },
     )
     assert.equal((await res.json()).data.auth_data, 'ok')
     assert.equal(
@@ -530,14 +581,16 @@ describe('panel API host selection', () => {
 
   it('does not remember a host outside the panel list', async () => {
     const storage = memoryStorage()
-    const { fetchImpl } = scripted([
+    const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { ok: true } }),
       async () => jsonResponse(200, { data: { auth_data: 'ok' } }),
     ])
     await panelApiFetch(
       '/passport/auth/login',
-      {},
+      { method: 'POST', body: '{}' },
       { fetchImpl, storage, hosts: ['a.example'] },
     )
+    assert.equal(calls.length, 2)
     assert.equal(storage.getItem(PANEL_HOST_STORAGE_KEY), null)
   })
 
@@ -576,6 +629,138 @@ describe('panel API host selection', () => {
     })
     assert.equal(forgetUrl, 'https://np1.lianjieni.com/#/forget')
     assert.equal(working.getItem(PANEL_HOST_STORAGE_KEY), 'np1.lianjieni.com')
+  })
+
+  it('starts the next host before the first timeout and aborts the loser', async () => {
+    const calls: string[] = []
+    let firstSignal: AbortSignal | undefined
+    const started = Date.now()
+    const fetchImpl: PanelFetch = (url, init) => {
+      calls.push(url)
+      if (calls.length === 1) {
+        firstSignal = init.signal
+        return hang(init.signal)
+      }
+      return Promise.resolve(jsonResponse(200, { data: { auth_data: 'fast' } }))
+    }
+    const res = await panelApiFetch(
+      '/user/getSubscribe',
+      {},
+      {
+        fetchImpl,
+        hosts: ['a.example', 'b.example'],
+        hostTimeoutMs: 5_000,
+        staggerMs: 40,
+        budgetMs: 5_000,
+      },
+    )
+    assert.equal((await res.json()).data.auth_data, 'fast')
+    assert.ok(Date.now() - started < 1_000)
+    assert.deepEqual(calls, [
+      'https://a.example/api/v1/user/getSubscribe',
+      'https://b.example/api/v1/user/getSubscribe',
+    ])
+    assert.equal(firstSignal?.aborted, true)
+    assert.equal(firstSignal?.reason, 'winner')
+  })
+
+  it('shows a JSON 4xx from a later host and does not log it as a failure', async () => {
+    let firstSignal: AbortSignal | undefined
+    const logs: string[] = []
+    const fetchImpl: PanelFetch = (url, init) => {
+      if (url.includes('a.example')) {
+        firstSignal = init.signal
+        return hang(init.signal)
+      }
+      return Promise.resolve(jsonResponse(422, { message: '邮箱或密码错误' }))
+    }
+    const res = await panelApiFetch(
+      '/user/getSubscribe',
+      {},
+      {
+        fetchImpl,
+        hosts: ['a.example', 'b.example', 'c.example'],
+        hostTimeoutMs: 5_000,
+        staggerMs: 30,
+        budgetMs: 5_000,
+        log: (line) => logs.push(line),
+      },
+    )
+    assert.equal(res.status, 422)
+    assert.equal((await res.json()).message, '邮箱或密码错误')
+    assert.equal(firstSignal?.aborted, true)
+    assert.deepEqual(logs, [])
+  })
+
+  it('opens the next host immediately after a fast failure', async () => {
+    const started = Date.now()
+    const calls: string[] = []
+    const fetchImpl: PanelFetch = (url) => {
+      calls.push(url)
+      if (calls.length === 1)
+        return Promise.reject(new Error(`down ${RAW_MARKER}`))
+      return Promise.resolve(jsonResponse(200, { data: { ok: true } }))
+    }
+    const res = await panelApiFetch(
+      '/user/info',
+      {},
+      {
+        fetchImpl,
+        hosts: ['a.example', 'b.example'],
+        staggerMs: 5_000,
+        hostTimeoutMs: 5_000,
+        budgetMs: 8_000,
+      },
+    )
+    assert.equal((await res.json()).data.ok, true)
+    assert.equal(calls.length, 2)
+    assert.ok(Date.now() - started < 1_000)
+  })
+
+  it('sends a mutating POST only to the first host whose probe answered', async () => {
+    const calls: Array<{ url: string; method: string; body: string }> = []
+    let slow: AbortSignal | undefined
+    const fetchImpl: PanelFetch = (url, init) => {
+      calls.push({
+        url,
+        method: String(init.method ?? 'GET').toUpperCase(),
+        body: typeof init.body === 'string' ? init.body : '',
+      })
+      if (url.includes('a.example')) {
+        slow = init.signal
+        return hang(init.signal)
+      }
+      if (url.endsWith('/guest/comm/config')) {
+        return Promise.resolve(jsonResponse(200, { data: { ok: true } }))
+      }
+      return Promise.resolve(jsonResponse(422, { message: '邮箱或密码错误' }))
+    }
+    const res = await panelApiFetch(
+      '/passport/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify({ password: PASSWORD }),
+      },
+      {
+        fetchImpl,
+        hosts: ['a.example', 'b.example', 'c.example'],
+        hostTimeoutMs: 5_000,
+        staggerMs: 40,
+        budgetMs: 5_000,
+      },
+    )
+    assert.equal(res.status, 422)
+    assert.equal((await res.json()).message, '邮箱或密码错误')
+    const posts = calls.filter((call) => call.method === 'POST')
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].url, 'https://b.example/api/v1/passport/auth/login')
+    assert.equal(posts[0].body.includes(PASSWORD), true)
+    assert.equal(calls.filter((call) => call.body.includes(PASSWORD)).length, 1)
+    assert.equal(
+      calls.some((call) => call.url.includes('c.example')),
+      false,
+    )
+    assert.equal(slow?.aborted, true)
   })
 
   it('rewrites download links onto the host that answered', () => {
