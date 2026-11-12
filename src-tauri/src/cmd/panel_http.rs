@@ -293,8 +293,7 @@ fn apply_headers(mut builder: reqwest::RequestBuilder, headers: HeaderMap) -> re
     builder
 }
 
-async fn execute_panel_http(request: PanelHttpRequest) -> PanelHttpOutcome {
-    let route = request.route.unwrap_or_else(|| "direct".to_string());
+async fn execute_with_choice(request: PanelHttpRequest, choice: ProxyChoice) -> PanelHttpOutcome {
     let timeout_ms = request.timeout_ms.unwrap_or(8_000).clamp(1, 20_000);
     let url = match validate_url(&request.url) {
         Ok(url) => url,
@@ -304,8 +303,6 @@ async fn execute_panel_http(request: PanelHttpRequest) -> PanelHttpOutcome {
         Some(method) => method,
         None => return failure(TransportKind::Other),
     };
-    let system = if route == "system" { read_system_proxy() } else { None };
-    let choice = choose_proxy(&route, system.as_ref());
     let client = match build_client(choice, Duration::from_millis(timeout_ms)) {
         Ok(client) => client,
         Err(()) => return failure(TransportKind::Other),
@@ -359,10 +356,27 @@ async fn execute_panel_http(request: PanelHttpRequest) -> PanelHttpOutcome {
     }
 }
 
+async fn execute_panel_http(request: PanelHttpRequest) -> PanelHttpOutcome {
+    let route = request.route.clone().unwrap_or_else(|| "direct".to_string());
+    let system = if route == "system" { read_system_proxy() } else { None };
+    let choice = choose_proxy(&route, system.as_ref());
+    execute_with_choice(request, choice).await
+}
+
 #[tauri::command]
 pub async fn panel_http_fetch(request: PanelHttpRequest) -> PanelHttpOutcome {
     execute_panel_http(request).await
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::collapsible_if,
+    clippy::expect_used,
+    clippy::too_many_lines
+)]
+#[path = "qa_matrix.rs"]
+mod qa_matrix;
 
 #[cfg(test)]
 mod tests {

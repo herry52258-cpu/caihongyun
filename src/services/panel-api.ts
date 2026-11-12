@@ -1,11 +1,12 @@
 // 面板 API 只走 HTTPS 主机名，不写 IP。
-// 新入口指向同一套 Xboard，都在 Cloudflare 后面，按顺序先试。
-// 旧域名只做兜底。已经否决的入口不进列表。
+// np1、np2 国内三网最稳，放在最前。nlogin、login 也基本通。
+// k7m2 偶发超时，放在它们后面。旧域名国内基本不通，只做最后兜底，
+// 不记成优先入口，避免拖住首屏。总预算到点就停，给用户一句大白话。
 export const PANEL_WEB_HOSTS = [
-  'nlogin.lianjieni.com',
   'np1.lianjieni.com',
-  'login.lianjieni.com',
   'np2.lianjieni.com',
+  'nlogin.lianjieni.com',
+  'login.lianjieni.com',
 ] as const
 
 export const PANEL_API_FALLBACK_HOSTS = [
@@ -16,19 +17,22 @@ export const PANEL_API_FALLBACK_HOSTS = [
   'w3.yuntanlu.com',
 ] as const
 
-// k7m2 只加在整表末尾，URL 仍是 https://主机/api/v1/...，不插队、不加 p1。
-export const PANEL_API_HOSTS = [
+export const PANEL_FAST_HOSTS = [
   ...PANEL_WEB_HOSTS,
-  ...PANEL_API_FALLBACK_HOSTS,
   'k7m2.lianjieni.com',
+] as const
+
+export const PANEL_API_HOSTS = [
+  ...PANEL_FAST_HOSTS,
+  ...PANEL_API_FALLBACK_HOSTS,
 ] as const
 
 export const PANEL_WEB_ORIGIN = `https://${PANEL_WEB_HOSTS[0]}`
 
 // 下载站。桌面更新清单和安装包都先走这里，dl 只做兜底。
 export const DOWNLOAD_HOSTS = [
-  'down.yuntanlu.com',
   'ndl.lianjieni.com',
+  'down.yuntanlu.com',
   'dl.yuntanlu.com',
 ] as const
 
@@ -78,9 +82,17 @@ export class PanelTransportError extends Error {
   }
 }
 
-/** 已连接且节点把请求拒掉时，购买页用这句话，不再笼统说网络失败。 */
-export const EXPIRED_ACCOUNT_HINT =
-  '账号已到期，可直接在这里续费；如果打不开，请先点「断开」再试'
+/** 购买页加载失败时只给用户看这一句，不列入口、不写状态码。 */
+export const PLAN_LOAD_FAIL_TEXT =
+  '套餐暂时没加载出来，请点重试；还不行就先点「断开」再打开'
+
+/** 登录连不上面板时只给用户看这一句。 */
+export const LOGIN_FAIL_TEXT =
+  '登录没连上，请稍后重试；还不行就先点「断开」再试'
+
+/** 到期或流量用完、连不上线路时只给用户看这一句。 */
+export const CONNECT_FAIL_TEXT =
+  '暂时连不上，请打开购买页续费，或先点「断开」再试'
 
 export type PanelAttempt = {
   host: string
@@ -238,28 +250,21 @@ export function classifyTransportFailure(
   return classifyTransportText(message)
 }
 
+/** 日志和测试用。界面不要直接把这句话画出来。 */
 export function safePanelError(error: unknown): string {
   if (error instanceof PanelRequestError) return error.message
   return classifyTransportFailure(error, false)
 }
 
-function isConnectRefusal(reason: string): boolean {
-  return bareReason(reason) === '连不上或被拒绝'
+export function purchaseLoadMessage(
+  _error: unknown,
+  _connected: boolean,
+): string {
+  return PLAN_LOAD_FAIL_TEXT
 }
 
-export function purchaseLoadMessage(
-  error: unknown,
-  connected: boolean,
-): string {
-  if (
-    connected &&
-    error instanceof PanelRequestError &&
-    error.attempts.length > 0 &&
-    error.attempts.every((item) => isConnectRefusal(item.reason))
-  ) {
-    return EXPIRED_ACCOUNT_HINT
-  }
-  return safePanelError(error)
+export function loginFailMessage(_error: unknown): string {
+  return LOGIN_FAIL_TEXT
 }
 
 export function businessPurchaseMessage(
@@ -762,7 +767,7 @@ async function panelApiFetchOnRoute(
   const { signal: _callerSignal, ...requestInit } = init
   const preferred = readPreferredHost(
     storage,
-    PANEL_API_HOSTS,
+    PANEL_FAST_HOSTS,
     PANEL_HOST_STORAGE_KEY,
   )
   const hosts = orderHosts(deps.hosts ?? PANEL_API_HOSTS, preferred)
@@ -779,7 +784,7 @@ async function panelApiFetchOnRoute(
     rememberPreferredHost(
       storage,
       host,
-      PANEL_API_HOSTS,
+      PANEL_FAST_HOSTS,
       PANEL_HOST_STORAGE_KEY,
     )
   }
@@ -867,10 +872,26 @@ export async function panelApiFetch(
   init: RequestInit = {},
   deps: PanelApiDeps = {},
 ): Promise<Response> {
-  return withDirectThenProxy(
-    (route) => panelApiFetchOnRoute(path, init, deps, route),
-    deps,
-  )
+  const now = deps.now ?? Date.now
+  const budgetMs = deps.budgetMs ?? PANEL_API_BUDGET_MS
+  const deadline = now() + budgetMs
+  const remaining = () => Math.max(0, deadline - (deps.now ?? Date.now)())
+  const run = (route: PanelRoute) =>
+    panelApiFetchOnRoute(path, init, { ...deps, budgetMs: remaining() }, route)
+  try {
+    return await run('direct')
+  } catch (error) {
+    if (!(error instanceof PanelRequestError)) throw error
+    if (remaining() <= 0 || !(await proxyRetryEnabled(deps))) throw error
+    try {
+      return await run('system')
+    } catch (fallback) {
+      if (fallback instanceof PanelRequestError) {
+        throw new PanelRequestError([...error.attempts, ...fallback.attempts])
+      }
+      throw error
+    }
+  }
 }
 
 export async function resolvePanelPageUrl(

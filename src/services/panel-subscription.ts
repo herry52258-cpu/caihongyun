@@ -1,7 +1,7 @@
 import { importProfile } from './cmds'
 import {
+  CONNECT_FAIL_TEXT,
   PANEL_API_HOSTS,
-  classifyTransportFailure,
   isHostnameOnly,
   orderedPanelHosts,
 } from './panel-api'
@@ -15,7 +15,7 @@ export async function importPanelSubscription(subUrl: string): Promise<void> {
   const path = subUrl.replace(/^https?:\/\/[^/]+/, '')
   const attempts: string[] = []
   if (!path.startsWith('/')) {
-    throw new Error('请求失败')
+    throw new Error(CONNECT_FAIL_TEXT)
   }
   for (const host of orderedPanelHosts()) {
     if (
@@ -34,9 +34,12 @@ export async function importPanelSubscription(subUrl: string): Promise<void> {
         timeout_seconds: SUBSCRIPTION_TIMEOUT_SECONDS,
       })
       return
-    } catch (error) {
-      attempts.push(`${host}: ${classifyTransportFailure(error, false)}`)
+    } catch {
+      attempts.push(host)
     }
   }
-  throw new Error(attempts.join('；') || '请求失败')
+  if (attempts.length > 0) {
+    console.warn(`订阅导入失败，已尝试 ${attempts.length} 个入口`)
+  }
+  throw new Error(CONNECT_FAIL_TEXT)
 }
