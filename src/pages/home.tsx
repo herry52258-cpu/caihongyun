@@ -29,10 +29,12 @@ import {
   updateProfile,
 } from '@/services/cmds'
 import {
+  CONNECT_FAIL_TEXT,
+  LOGIN_FAIL_TEXT,
+  PLAN_LOAD_FAIL_TEXT,
   panelApiFetch,
   panelPageOrigin,
   resolvePanelPageUrl,
-  safePanelError,
 } from '@/services/panel-api'
 import { importPanelSubscription } from '@/services/panel-subscription'
 import { fetchCacheData } from '@/services/query-client'
@@ -216,8 +218,8 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
       localStorage.setItem(CAIHONGYUN_INIT_KEY, '1')
       localStorage.setItem('caihongyun_email', email)
       onSuccess()
-    } catch (error) {
-      setError(safePanelError(error))
+    } catch {
+      setError(LOGIN_FAIL_TEXT)
     } finally {
       setLoading(false)
     }
@@ -381,9 +383,11 @@ const PurchaseDialog = ({
   const [payId, setPayId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [buying, setBuying] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
   const [done, setDone] = useState('')
   const [noAuth, setNoAuth] = useState(false)
+  const loadSeqRef = useRef(0)
 
   // 按所选套餐金额过滤支付方式(支付宝≤¥300 / 微信≤¥1000)；若全部超限则兜底显示全部
   const availablePays = useMemo(() => {
@@ -398,57 +402,83 @@ const PurchaseDialog = ({
       ? payId
       : (availablePays[0]?.id ?? null)
 
+  const loadPlans = useCallback(async (seq: number) => {
+    const stale = () => loadSeqRef.current !== seq
+    setError('')
+    setDone('')
+    setLoadError('')
+    const token = localStorage.getItem(AUTH_KEY)
+    if (!token) {
+      if (!stale()) setNoAuth(true)
+      return
+    }
+    if (stale()) return
+    setNoAuth(false)
+    setLoading(true)
+    try {
+      const pr = await panelApiFetch(`/user/plan/fetch`, {
+        headers: authHeaders(),
+      })
+      const pj = await pr.json()
+      if (stale()) return
+      const rawPlans = Array.isArray(pj?.data) ? pj.data : []
+      const list = buildPlans(rawPlans)
+      if (list.length === 0) {
+        const message = typeof pj?.message === 'string' ? pj.message : ''
+        if (!pr.ok || message) {
+          setPlans([])
+          setSelected(null)
+          setPayments([])
+          setLoadError(PLAN_LOAD_FAIL_TEXT)
+          return
+        }
+      }
+      setPlans(list)
+      setSelected(
+        list.find((p) => p.period === 'year_price') ||
+          list.find((p) => p.period === 'onetime_price') ||
+          list[0] ||
+          null,
+      )
+      setLoadError('')
+      const mr = await panelApiFetch(`/user/order/getPaymentMethod`, {
+        headers: authHeaders(),
+      })
+      const mj = await mr.json()
+      if (stale()) return
+      const pays: PayItem[] = (mj.data || []).map(
+        (o: Record<string, unknown>) => ({
+          id: Number(o.id),
+          name: String(o.name || '支付'),
+        }),
+      )
+      setPayments(pays)
+      setPayId(pays[0]?.id ?? null)
+    } catch {
+      if (!stale()) {
+        setPlans([])
+        setSelected(null)
+        setPayments([])
+        setLoadError(PLAN_LOAD_FAIL_TEXT)
+      }
+    } finally {
+      if (!stale()) setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!open) return
-    let cancelled = false
-    void (async () => {
-      setError('')
-      setDone('')
-      const token = localStorage.getItem(AUTH_KEY)
-      if (!token) {
-        if (!cancelled) setNoAuth(true)
-        return
-      }
-      if (cancelled) return
-      setNoAuth(false)
-      setLoading(true)
-      try {
-        const pr = await panelApiFetch(`/user/plan/fetch`, {
-          headers: authHeaders(),
-        })
-        const pj = await pr.json()
-        if (cancelled) return
-        const list = buildPlans(pj.data || [])
-        setPlans(list)
-        setSelected(
-          list.find((p) => p.period === 'year_price') ||
-            list.find((p) => p.period === 'onetime_price') ||
-            list[0] ||
-            null,
-        )
-        const mr = await panelApiFetch(`/user/order/getPaymentMethod`, {
-          headers: authHeaders(),
-        })
-        const mj = await mr.json()
-        if (cancelled) return
-        const pays: PayItem[] = (mj.data || []).map(
-          (o: Record<string, unknown>) => ({
-            id: Number(o.id),
-            name: String(o.name || '支付'),
-          }),
-        )
-        setPayments(pays)
-        setPayId(pays[0]?.id ?? null)
-      } catch (error) {
-        if (!cancelled) setError(safePanelError(error))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
+    const seq = ++loadSeqRef.current
+    void loadPlans(seq)
     return () => {
-      cancelled = true
+      loadSeqRef.current += 1
     }
-  }, [open])
+  }, [open, loadPlans])
+
+  const retryPlans = () => {
+    const seq = ++loadSeqRef.current
+    void loadPlans(seq)
+  }
 
   const cancelPending = async () => {
     try {
@@ -528,8 +558,8 @@ const PurchaseDialog = ({
       }
       await openWindow(payUrl, 'cashier', '支付')
       setDone('已打开支付页面，付款完成后关闭即可')
-    } catch (error) {
-      setError(safePanelError(error))
+    } catch {
+      setError(PLAN_LOAD_FAIL_TEXT)
     } finally {
       setBuying(false)
     }
@@ -574,6 +604,36 @@ const PurchaseDialog = ({
             }}
           >
             加载套餐中…
+          </div>
+        ) : loadError ? (
+          <div style={{ textAlign: 'center', padding: '8px 4px 4px' }}>
+            <div
+              style={{
+                color: '#ff6b6b',
+                fontSize: 13,
+                lineHeight: 1.7,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {loadError}
+            </div>
+            <button
+              type="button"
+              onClick={retryPlans}
+              style={{
+                marginTop: 14,
+                padding: '10px 22px',
+                borderRadius: 10,
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              重试
+            </button>
           </div>
         ) : (
           <>
@@ -975,6 +1035,7 @@ const HomePage = () => {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [connectHint, setConnectHint] = useState('')
 
   const connected = configState
   const realConnected = indicator
@@ -1015,16 +1076,22 @@ const HomePage = () => {
       // 先自动多通道重拉一次订阅再连,而不是让用户卡在"暂无可用线路"。
       if (!connected && nodes.length === 0) {
         const auth = localStorage.getItem(AUTH_KEY)
+        let imported = false
         if (auth) {
           try {
-            await ensureSubscription(auth)
+            imported = await ensureSubscription(auth)
             await mutateProfiles()
             await refreshProxy?.()
           } catch {
-            // 重拉仍失败(线路全掐/套餐到期):照常尝试连接,不额外打扰
+            imported = false
           }
         }
+        if (!imported) {
+          setConnectHint(CONNECT_FAIL_TEXT)
+          return
+        }
       }
+      setConnectHint('')
       await toggleSystemProxy(!connected)
     } finally {
       setTimeout(() => setBusy(false), 400)
@@ -1359,6 +1426,19 @@ const HomePage = () => {
         >
           {statusText}
         </div>
+        {connectHint && (
+          <div
+            style={{
+              maxWidth: 320,
+              textAlign: 'center',
+              fontSize: 13,
+              lineHeight: 1.7,
+              color: 'rgba(255,255,255,0.78)',
+            }}
+          >
+            {connectHint}
+          </div>
+        )}
 
         {/* 节点选择 */}
         <button

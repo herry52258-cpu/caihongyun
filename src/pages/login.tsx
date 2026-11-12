@@ -8,8 +8,8 @@ import { useAppVersion } from '@/hooks/use-app-version'
 import { openWebUrl } from '@/services/cmds'
 import {
   panelApiFetch,
+  LOGIN_FAIL_TEXT,
   resolvePanelPageUrl,
-  safePanelError,
 } from '@/services/panel-api'
 import { importPanelSubscription } from '@/services/panel-subscription'
 
@@ -102,8 +102,8 @@ export default function LoginPage() {
       localStorage.setItem('caihongyun_initialized', '1')
       localStorage.setItem('caihongyun_email', email)
       navigate('/')
-    } catch (error) {
-      setError(safePanelError(error))
+    } catch {
+      setError(LOGIN_FAIL_TEXT)
     } finally {
       setLoading(false)
     }

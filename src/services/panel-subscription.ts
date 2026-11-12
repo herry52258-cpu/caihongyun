@@ -1,5 +1,10 @@
 import { importProfile } from './cmds'
-import { PANEL_API_HOSTS, isHostnameOnly, orderedPanelHosts } from './panel-api'
+import {
+  CONNECT_FAIL_TEXT,
+  PANEL_API_HOSTS,
+  isHostnameOnly,
+  orderedPanelHosts,
+} from './panel-api'
 
 // 单条订阅下载超时。短于内核默认的 20 秒，失败后尽快换下一个面板入口。
 const SUBSCRIPTION_TIMEOUT_SECONDS = 8
@@ -10,7 +15,7 @@ export async function importPanelSubscription(subUrl: string): Promise<void> {
   const path = subUrl.replace(/^https?:\/\/[^/]+/, '')
   const attempts: string[] = []
   if (!path.startsWith('/')) {
-    throw new Error('网络或TLS失败')
+    throw new Error(CONNECT_FAIL_TEXT)
   }
   for (const host of orderedPanelHosts()) {
     if (
@@ -30,8 +35,11 @@ export async function importPanelSubscription(subUrl: string): Promise<void> {
       })
       return
     } catch {
-      attempts.push(`${host}: 网络或TLS失败`)
+      attempts.push(host)
     }
   }
-  throw new Error(attempts.join('；') || '网络或TLS失败')
+  if (attempts.length > 0) {
+    console.warn(`订阅导入失败，已尝试 ${attempts.length} 个入口`)
+  }
+  throw new Error(CONNECT_FAIL_TEXT)
 }
