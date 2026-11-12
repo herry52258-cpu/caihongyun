@@ -1,5 +1,3 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
-
 import { readAppVersion } from './app-version'
 import { openWebUrl } from './cmds'
 import {
@@ -10,11 +8,14 @@ import {
   PANEL_HOST_TIMEOUT_MS,
   browserHostStorage,
   orderHosts,
+  panelTransportFetch,
   preferDownloadUrl,
   raceHosts,
   readPreferredHost,
   rememberPreferredHost,
+  withDirectThenProxy,
   type PanelFailReason,
+  type PanelRoute,
 } from './panel-api'
 
 // 桌面版在线更新检查：启动时拉 /version-desktop.json（多域名抗封），
@@ -46,26 +47,34 @@ async function fetchUpdate(): Promise<{
     DOWNLOAD_HOST_STORAGE_KEY,
   )
   try {
-    const found = await raceHosts({
-      hosts: orderHosts(UPDATE_HOSTS, preferred),
-      hostTimeoutMs: PANEL_HOST_TIMEOUT_MS,
-      budgetMs: PANEL_API_BUDGET_MS,
-      staggerMs: PANEL_HOST_STAGGER_MS,
-      log: () => {},
-      attempt: async (host, signal) => {
-        const res = await tauriFetch(`https://${host}/version-desktop.json`, {
-          redirect: 'manual',
-          maxRedirections: 0,
-          signal,
-        })
-        if (!res.ok) return { ok: false, reason: updateFailReason(res.status) }
-        const data: unknown = await res.json()
-        if (!data || typeof data !== 'object') {
-          return { ok: false, reason: '非JSON响应' }
-        }
-        return { ok: true, value: data as Record<string, unknown> }
-      },
-    })
+    const found = await withDirectThenProxy((route: PanelRoute) =>
+      raceHosts({
+        hosts: orderHosts(UPDATE_HOSTS, preferred),
+        hostTimeoutMs: PANEL_HOST_TIMEOUT_MS,
+        budgetMs: PANEL_API_BUDGET_MS,
+        staggerMs: PANEL_HOST_STAGGER_MS,
+        reasonPrefix: route === 'system' ? '代理' : '直连',
+        log: () => {},
+        attempt: async (host, signal) => {
+          const res = await panelTransportFetch(
+            `https://${host}/version-desktop.json`,
+            {
+              redirect: 'manual',
+              maxRedirections: 0,
+              signal,
+              route,
+            },
+          )
+          if (!res.ok)
+            return { ok: false, reason: updateFailReason(res.status) }
+          const data: unknown = await res.json()
+          if (!data || typeof data !== 'object') {
+            return { ok: false, reason: '非JSON响应' }
+          }
+          return { ok: true, value: data as Record<string, unknown> }
+        },
+      }),
+    )
     rememberPreferredHost(
       storage,
       found.host,

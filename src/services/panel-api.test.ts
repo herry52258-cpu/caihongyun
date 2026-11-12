@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 
 import {
   DOWNLOAD_HOSTS,
+  EXPIRED_ACCOUNT_HINT,
   PANEL_API_BUDGET_MS,
   PANEL_API_HOSTS,
   PANEL_HOST_STAGGER_MS,
@@ -12,9 +13,13 @@ import {
   PANEL_WEB_HOSTS,
   PANEL_WEB_ORIGIN,
   PanelRequestError,
+  PanelTransportError,
+  businessPurchaseMessage,
+  classifyTransportText,
   isHostnameOnly,
   panelApiFetch,
   preferDownloadUrl,
+  purchaseLoadMessage,
   resolvePanelPageUrl,
   type HostStorage,
   type PanelFetch,
@@ -163,6 +168,12 @@ describe('panel API host selection', () => {
     assert.equal(calls[1].init.method, 'POST')
     assert.equal(calls[1].init.redirect, 'manual')
     assert.equal(calls[1].init.maxRedirections, 0)
+    assert.equal(calls[0].init.route, 'direct')
+    assert.equal(calls[1].init.route, 'direct')
+    assert.equal(
+      calls.some((call) => call.init.route === 'system'),
+      false,
+    )
     assert.equal(data.data.auth_data, 'ok')
   })
 
@@ -212,7 +223,7 @@ describe('panel API host selection', () => {
     const data = await res.json()
     assert.equal(calls.length, 2)
     assert.equal(data.data.auth_data, 'fallback')
-    assert.deepEqual(logs, ['nlogin.lianjieni.com: 网络或TLS失败'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: 直连连不上或被拒绝'])
     assertSafeText(logs.join('\n'))
   })
 
@@ -229,7 +240,7 @@ describe('panel API host selection', () => {
     )
     assert.equal((await res.json()).data.auth_data, 'fallback')
     assert.equal(calls.length, 2)
-    assert.deepEqual(logs, ['nlogin.lianjieni.com: HTTP 502'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: 直连HTTP 502'])
     assertSafeText(logs.join('\n'))
   })
 
@@ -250,7 +261,7 @@ describe('panel API host selection', () => {
     const data = await res.json()
     assert.equal(calls.length, 2)
     assert.equal(data.data.subscribe_url, 'https://lianjieni.com/s/example')
-    assert.deepEqual(logs, ['nlogin.lianjieni.com: 非JSON响应'])
+    assert.deepEqual(logs, ['nlogin.lianjieni.com: 直连非JSON响应'])
   })
 
   it('shows a JSON business rejection immediately and does not try another host', async () => {
@@ -328,8 +339,8 @@ describe('panel API host selection', () => {
         ),
       (error: unknown) => {
         assert.ok(error instanceof PanelRequestError)
-        assert.match(error.message, /a\.example: 超时/)
-        assert.match(error.message, /b\.example: 超时/)
+        assert.match(error.message, /a\.example: 直连超时/)
+        assert.match(error.message, /b\.example: 直连超时/)
         assert.equal(error.message.includes('c.example'), false)
         assertSafeText(error.message)
         return true
@@ -370,7 +381,7 @@ describe('panel API host selection', () => {
         ),
       (error: unknown) => {
         assert.ok(error instanceof PanelRequestError)
-        assert.match(error.message, /a\.example: 超时/)
+        assert.match(error.message, /a\.example: 直连超时/)
         assert.equal(error.message.includes('b.example'), false)
         return true
       },
@@ -411,7 +422,7 @@ describe('panel API host selection', () => {
           assert.ok(error instanceof PanelRequestError)
           assert.equal(
             error.message,
-            'lianjieni.com: 网络或TLS失败；p2.yuntanlu.com: HTTP 500；w1.yuntanlu.com: 非JSON响应',
+            'lianjieni.com: 直连连不上或被拒绝；p2.yuntanlu.com: 直连HTTP 500；w1.yuntanlu.com: 直连非JSON响应',
           )
           assertSafeText(error.message)
           assert.equal(error.message.includes('token='), false)
@@ -420,9 +431,9 @@ describe('panel API host selection', () => {
         },
       )
       assert.deepEqual(warnings, [
-        'lianjieni.com: 网络或TLS失败',
-        'p2.yuntanlu.com: HTTP 500',
-        'w1.yuntanlu.com: 非JSON响应',
+        'lianjieni.com: 直连连不上或被拒绝',
+        'p2.yuntanlu.com: 直连HTTP 500',
+        'w1.yuntanlu.com: 直连非JSON响应',
       ])
       assertSafeText(warnings.join('\n'))
     } finally {
@@ -465,6 +476,7 @@ describe('panel API host selection', () => {
       'src/pages/login.tsx',
       'src/pages/home.tsx',
       'src/main.tsx',
+      'src-tauri/src/cmd/panel_http.rs',
     ]
     const banned = [
       'p1.yuntanlu.com',
@@ -504,20 +516,41 @@ describe('panel API host selection', () => {
     assert.equal(updater.includes('raceHosts'), true)
     assert.equal(api.includes('raceHosts'), true)
     assert.equal(api.includes('k7m2.lianjieni.com'), true)
+    assert.equal(api.includes('panel_http_fetch'), true)
+    assert.equal(api.includes('withDirectThenProxy'), true)
+    assert.equal(api.includes('@tauri-apps/plugin-http'), false)
+    assert.equal(api.includes('网络或TLS失败'), false)
+    assert.equal(updater.includes('panelTransportFetch'), true)
+    assert.equal(updater.includes('withDirectThenProxy'), true)
+    assert.equal(updater.includes('@tauri-apps/plugin-http'), false)
+    assert.equal(home.includes('purchaseLoadMessage'), true)
+    assert.equal(home.includes('重试'), true)
+    assert.equal(home.includes('网络或TLS失败'), false)
+    const directHttp = readFileSync('src-tauri/src/cmd/panel_http.rs', 'utf8')
+    assert.equal(directHttp.includes('.no_proxy()'), true)
+    assert.equal(directHttp.includes('Sysproxy::get_system_proxy'), true)
+    assert.equal(directHttp.includes('target_os'), false)
+    for (const host of PANEL_API_HOSTS) {
+      assert.equal(directHttp.includes(`"${host}"`), true)
+    }
+    for (const host of DOWNLOAD_HOSTS) {
+      assert.equal(directHttp.includes(`"${host}"`), true)
+    }
+    assert.equal(/\b\d{1,3}(?:\.\d{1,3}){3}\b/.test(directHttp), false)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(login), false)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(home), false)
     assert.equal(/['"]v1\.0\.\d+['"]/.test(updater), false)
     assert.equal(
       JSON.parse(readFileSync('package.json', 'utf8')).version,
-      '1.0.33',
+      '1.0.34',
     )
     assert.equal(
       JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).version,
-      '1.0.33',
+      '1.0.34',
     )
     assert.match(
       readFileSync('src-tauri/Cargo.toml', 'utf8'),
-      /^version = "1.0.33"$/m,
+      /^version = "1.0.34"$/m,
     )
   })
 
@@ -793,5 +826,169 @@ describe('panel API host selection', () => {
       preferDownloadUrl('https://dl.yuntanlu.com/a.exe', '203.0.113.10'),
       'https://dl.yuntanlu.com/a.exe',
     )
+  })
+
+  it('keeps a direct success off the system proxy even when the proxy is on', async () => {
+    const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: [{ id: 1 }] }),
+    ])
+    const res = await panelApiFetch(
+      '/user/plan/fetch',
+      {},
+      { fetchImpl, systemProxyEnabled: async () => true },
+    )
+    assert.equal((await res.json()).data[0].id, 1)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].init.route, 'direct')
+  })
+
+  it('retries the same hosts once through the proxy after every direct entry fails', async () => {
+    const calls: Array<{ url: string; route?: string }> = []
+    const fetchImpl: PanelFetch = (url, init) => {
+      calls.push({ url, route: init.route })
+      if (init.route === 'system' && url.includes('np1.lianjieni.com')) {
+        return Promise.resolve(jsonResponse(200, { data: { plans: true } }))
+      }
+      return Promise.reject(new PanelTransportError('connect'))
+    }
+    const res = await panelApiFetch(
+      '/user/plan/fetch',
+      {},
+      {
+        fetchImpl,
+        hosts: ['nlogin.lianjieni.com', 'np1.lianjieni.com'],
+        systemProxyEnabled: async () => true,
+        staggerMs: 5_000,
+        hostTimeoutMs: 5_000,
+        budgetMs: 8_000,
+      },
+    )
+    assert.equal((await res.json()).data.plans, true)
+    assert.deepEqual(
+      calls.map((call) => `${call.route} ${call.url}`),
+      [
+        'direct https://nlogin.lianjieni.com/api/v1/user/plan/fetch',
+        'direct https://np1.lianjieni.com/api/v1/user/plan/fetch',
+        'system https://nlogin.lianjieni.com/api/v1/user/plan/fetch',
+        'system https://np1.lianjieni.com/api/v1/user/plan/fetch',
+      ],
+    )
+  })
+
+  it('does not open a proxy round when the system proxy is off', async () => {
+    const calls: string[] = []
+    const fetchImpl: PanelFetch = (url) => {
+      calls.push(url)
+      return Promise.reject(new PanelTransportError('connect'))
+    }
+    await assert.rejects(
+      () =>
+        panelApiFetch(
+          '/user/plan/fetch',
+          {},
+          {
+            fetchImpl,
+            hosts: ['a.example', 'b.example'],
+            systemProxyEnabled: async () => false,
+            staggerMs: 5_000,
+            hostTimeoutMs: 30,
+            budgetMs: 200,
+          },
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof PanelRequestError)
+        assert.match(error.message, /a\.example: 直连连不上或被拒绝/)
+        assert.match(error.message, /b\.example: 直连连不上或被拒绝/)
+        assert.equal(error.message.includes('代理'), false)
+        return true
+      },
+    )
+    assert.equal(calls.length, 2)
+  })
+
+  it('does not send a business rejection through the proxy again', async () => {
+    const { fetchImpl, calls } = scripted([
+      async () => jsonResponse(200, { data: { ok: true } }),
+      async () => jsonResponse(422, { message: '邮箱或密码错误' }),
+    ])
+    const res = await panelApiFetch(
+      '/passport/auth/login',
+      { method: 'POST', body: '{}' },
+      { fetchImpl, systemProxyEnabled: async () => true },
+    )
+    assert.equal(res.status, 422)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      calls.every((call) => call.init.route === 'direct'),
+      true,
+    )
+  })
+
+  it('classifies timeout, refusal and certificate errors from both desktops', () => {
+    assert.equal(classifyTransportText('operation timed out'), '超时')
+    assert.equal(
+      classifyTransportText('error sending request: timed out (os error 60)'),
+      '超时',
+    )
+    assert.equal(
+      classifyTransportText('连接尝试失败。 (os error 10060)'),
+      '超时',
+    )
+    assert.equal(
+      classifyTransportText('Connection refused (os error 61)'),
+      '连不上或被拒绝',
+    )
+    assert.equal(
+      classifyTransportText(
+        '由于目标计算机积极拒绝，无法连接。 (os error 10061)',
+      ),
+      '连不上或被拒绝',
+    )
+    assert.equal(
+      classifyTransportText('Connection reset by peer (os error 54)'),
+      '连不上或被拒绝',
+    )
+    assert.equal(
+      classifyTransportText(
+        '远程主机强迫关闭了一个现有的连接。 (os error 10054)',
+      ),
+      '连不上或被拒绝',
+    )
+    assert.equal(
+      classifyTransportText('invalid peer certificate: UnknownIssuer'),
+      'TLS证书错误',
+    )
+    assert.equal(classifyTransportText('webpki: notvalid'), 'TLS证书错误')
+    assert.equal(classifyTransportText('something else'), '请求失败')
+  })
+
+  it('tells a connected user to disconnect when the node refuses the purchase call', () => {
+    const refused = new PanelRequestError([
+      {
+        host: 'nlogin.lianjieni.com',
+        reason: '直连连不上或被拒绝',
+      },
+      {
+        host: 'nlogin.lianjieni.com',
+        reason: '代理连不上或被拒绝',
+      },
+    ])
+    assert.equal(purchaseLoadMessage(refused, true), EXPIRED_ACCOUNT_HINT)
+    assert.match(purchaseLoadMessage(refused, false), /直连连不上或被拒绝/)
+    assert.equal(
+      purchaseLoadMessage(refused, false).includes(EXPIRED_ACCOUNT_HINT),
+      false,
+    )
+    const tls = new PanelRequestError([
+      { host: 'nlogin.lianjieni.com', reason: '直连TLS证书错误' },
+    ])
+    assert.match(purchaseLoadMessage(tls, true), /TLS证书错误/)
+    assert.equal(
+      purchaseLoadMessage(tls, true).includes(EXPIRED_ACCOUNT_HINT),
+      false,
+    )
+    assert.equal(businessPurchaseMessage('流量已用尽', 403), '流量已用尽')
+    assert.equal(businessPurchaseMessage('', 502), 'HTTP 502')
+    assert.equal(businessPurchaseMessage('', 200), '请求失败')
   })
 })

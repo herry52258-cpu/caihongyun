@@ -29,8 +29,10 @@ import {
   updateProfile,
 } from '@/services/cmds'
 import {
+  businessPurchaseMessage,
   panelApiFetch,
   panelPageOrigin,
+  purchaseLoadMessage,
   resolvePanelPageUrl,
   safePanelError,
 } from '@/services/panel-api'
@@ -370,9 +372,11 @@ const LoginDialog = ({ onSuccess }: { onSuccess: () => void }) => {
 // ---------- 原生购买页 ----------
 const PurchaseDialog = ({
   open,
+  connected,
   onClose,
 }: {
   open: boolean
+  connected: boolean
   onClose: () => void
 }) => {
   const [plans, setPlans] = useState<PlanItem[]>([])
@@ -381,9 +385,11 @@ const PurchaseDialog = ({
   const [payId, setPayId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [buying, setBuying] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
   const [done, setDone] = useState('')
   const [noAuth, setNoAuth] = useState(false)
+  const loadSeqRef = useRef(0)
 
   // 按所选套餐金额过滤支付方式(支付宝≤¥300 / 微信≤¥1000)；若全部超限则兜底显示全部
   const availablePays = useMemo(() => {
@@ -398,18 +404,18 @@ const PurchaseDialog = ({
       ? payId
       : (availablePays[0]?.id ?? null)
 
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void (async () => {
+  const loadPlans = useCallback(
+    async (seq: number) => {
+      const stale = () => loadSeqRef.current !== seq
       setError('')
       setDone('')
+      setLoadError('')
       const token = localStorage.getItem(AUTH_KEY)
       if (!token) {
-        if (!cancelled) setNoAuth(true)
+        if (!stale()) setNoAuth(true)
         return
       }
-      if (cancelled) return
+      if (stale()) return
       setNoAuth(false)
       setLoading(true)
       try {
@@ -417,8 +423,19 @@ const PurchaseDialog = ({
           headers: authHeaders(),
         })
         const pj = await pr.json()
-        if (cancelled) return
-        const list = buildPlans(pj.data || [])
+        if (stale()) return
+        const rawPlans = Array.isArray(pj?.data) ? pj.data : []
+        const list = buildPlans(rawPlans)
+        if (list.length === 0) {
+          const message = typeof pj?.message === 'string' ? pj.message : ''
+          if (!pr.ok || message) {
+            setPlans([])
+            setSelected(null)
+            setPayments([])
+            setLoadError(businessPurchaseMessage(message, pr.status))
+            return
+          }
+        }
         setPlans(list)
         setSelected(
           list.find((p) => p.period === 'year_price') ||
@@ -426,11 +443,12 @@ const PurchaseDialog = ({
             list[0] ||
             null,
         )
+        setLoadError('')
         const mr = await panelApiFetch(`/user/order/getPaymentMethod`, {
           headers: authHeaders(),
         })
         const mj = await mr.json()
-        if (cancelled) return
+        if (stale()) return
         const pays: PayItem[] = (mj.data || []).map(
           (o: Record<string, unknown>) => ({
             id: Number(o.id),
@@ -440,15 +458,32 @@ const PurchaseDialog = ({
         setPayments(pays)
         setPayId(pays[0]?.id ?? null)
       } catch (error) {
-        if (!cancelled) setError(safePanelError(error))
+        if (!stale()) {
+          setPlans([])
+          setSelected(null)
+          setPayments([])
+          setLoadError(purchaseLoadMessage(error, connected))
+        }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!stale()) setLoading(false)
       }
-    })()
+    },
+    [connected],
+  )
+
+  useEffect(() => {
+    if (!open) return
+    const seq = ++loadSeqRef.current
+    void loadPlans(seq)
     return () => {
-      cancelled = true
+      loadSeqRef.current += 1
     }
-  }, [open])
+  }, [open, loadPlans])
+
+  const retryPlans = () => {
+    const seq = ++loadSeqRef.current
+    void loadPlans(seq)
+  }
 
   const cancelPending = async () => {
     try {
@@ -529,7 +564,7 @@ const PurchaseDialog = ({
       await openWindow(payUrl, 'cashier', '支付')
       setDone('已打开支付页面，付款完成后关闭即可')
     } catch (error) {
-      setError(safePanelError(error))
+      setError(purchaseLoadMessage(error, connected))
     } finally {
       setBuying(false)
     }
@@ -574,6 +609,36 @@ const PurchaseDialog = ({
             }}
           >
             加载套餐中…
+          </div>
+        ) : loadError ? (
+          <div style={{ textAlign: 'center', padding: '8px 4px 4px' }}>
+            <div
+              style={{
+                color: '#ff6b6b',
+                fontSize: 13,
+                lineHeight: 1.7,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {loadError}
+            </div>
+            <button
+              type="button"
+              onClick={retryPlans}
+              style={{
+                marginTop: 14,
+                padding: '10px 22px',
+                borderRadius: 10,
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              重试
+            </button>
           </div>
         ) : (
           <>
@@ -1486,6 +1551,7 @@ const HomePage = () => {
 
       <PurchaseDialog
         open={purchaseOpen}
+        connected={connected}
         onClose={() => setPurchaseOpen(false)}
       />
 

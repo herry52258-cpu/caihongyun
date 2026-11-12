@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     tags: ['v*', 'caihongyun-v*']
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -42,21 +43,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 准备更新签名密钥
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
+              printf '%s\n' "$SIGNING_KEY"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
+          else
+            pnpm tauri signer generate --ci --password ci-test -w updater.key
+            echo "TAURI_SIGNING_PRIVATE_KEY=$PWD/updater.key" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=ci-test" >> "$GITHUB_ENV"
+          fi
+
+      - name: 读取版本号
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: 编译 Windows 版
         run: pnpm tauri build --target x86_64-pc-windows-msvc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: 彩虹云-Windows
+          name: 彩虹云-Windows-${{ steps.ver.outputs.version }}
           path: |
             target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           retention-days: 30
+          if-no-files-found: error
 
       - name: 发布 Release（打 tag 时自动发布）
         if: startsWith(github.ref, 'refs/tags/')
@@ -102,19 +128,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 准备更新签名密钥
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY<<EOF"
+              printf '%s\n' "$SIGNING_KEY"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$SIGNING_PASSWORD" >> "$GITHUB_ENV"
+          else
+            pnpm tauri signer generate --ci --password ci-test -w updater.key
+            echo "TAURI_SIGNING_PRIVATE_KEY=$PWD/updater.key" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=ci-test" >> "$GITHUB_ENV"
+          fi
+
+      - name: 读取版本号
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: 编译 Mac 版 (Apple Silicon M1/M2/M3)
         run: pnpm tauri build --target aarch64-apple-darwin --bundles dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: 彩虹云-Mac
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: 彩虹云-Mac-${{ steps.ver.outputs.version }}
+          path: |
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           retention-days: 30
+          if-no-files-found: error
 
       - name: 发布 Release（打 tag 时自动发布）
         if: startsWith(github.ref, 'refs/tags/')

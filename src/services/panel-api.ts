@@ -51,18 +51,47 @@ const API_PREFIX = '/api/v1'
 
 const HOSTNAME_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
 
-export type PanelFailReason =
+type BareFailReason =
   | '超时'
-  | '网络或TLS失败'
+  | '连不上或被拒绝'
+  | 'TLS证书错误'
   | '非JSON响应'
+  | '请求失败'
   | `HTTP ${number}`
+
+export type PanelFailReason =
+  | BareFailReason
+  | `直连${BareFailReason}`
+  | `代理${BareFailReason}`
+
+export type PanelRoute = 'direct' | 'system'
+
+export type TransportKind = 'timeout' | 'connect' | 'tls' | 'other'
+
+export class PanelTransportError extends Error {
+  readonly kind: TransportKind
+
+  constructor(kind: TransportKind) {
+    super(kind)
+    this.name = 'PanelTransportError'
+    this.kind = kind
+  }
+}
+
+/** 已连接且节点把请求拒掉时，购买页用这句话，不再笼统说网络失败。 */
+export const EXPIRED_ACCOUNT_HINT =
+  '账号已到期，可直接在这里续费；如果打不开，请先点「断开」再试'
 
 export type PanelAttempt = {
   host: string
   reason: PanelFailReason
 }
 
-export type PanelRequestInit = RequestInit & { maxRedirections?: number }
+export type PanelRequestInit = RequestInit & {
+  maxRedirections?: number
+  route?: PanelRoute
+  timeoutMs?: number
+}
 
 export type PanelFetch = (
   url: string,
@@ -83,13 +112,28 @@ export type PanelApiDeps = {
   now?: () => number
   log?: (line: string) => void
   storage?: HostStorage | null
+  /** 测试里显式打开。正式包在直连全失败后读取系统代理，开着才再走一轮。 */
+  systemProxyEnabled?: () => boolean | Promise<boolean>
 }
 
 export type HostAttemptResult<T> =
   | { ok: true; value: T }
   | { ok: false; reason: PanelFailReason }
 
-const REASONS = new Set<string>(['超时', '网络或TLS失败', '非JSON响应'])
+const REASONS = new Set<string>([
+  '超时',
+  '连不上或被拒绝',
+  'TLS证书错误',
+  '非JSON响应',
+  '请求失败',
+])
+
+function bareReason(reason: string): string {
+  if (reason.startsWith('直连') || reason.startsWith('代理')) {
+    return reason.slice(2)
+  }
+  return reason
+}
 
 export function isHostnameOnly(host: string): boolean {
   if (typeof host !== 'string') return false
@@ -100,14 +144,15 @@ export function isHostnameOnly(host: string): boolean {
 }
 
 function isSafeReason(reason: string): reason is PanelFailReason {
-  return REASONS.has(reason) || /^HTTP [1-5]\d\d$/.test(reason)
+  const bare = bareReason(reason)
+  return REASONS.has(bare) || /^HTTP [1-5]\d\d$/.test(bare)
 }
 
 function formatAttempts(attempts: readonly PanelAttempt[]): string {
   const lines = attempts
     .filter((item) => isHostnameOnly(item.host) && isSafeReason(item.reason))
     .map((item) => `${item.host}: ${item.reason}`)
-  if (lines.length === 0) return '网络或TLS失败'
+  if (lines.length === 0) return '请求失败'
   return lines.join('；')
 }
 
@@ -121,9 +166,110 @@ export class PanelRequestError extends Error {
   }
 }
 
+export function classifyTransportText(message: string): BareFailReason {
+  const text = message.toLowerCase()
+  if (
+    text.includes('timed out') ||
+    text.includes('timeout') ||
+    text.includes('etimedout') ||
+    text.includes('wsaetimedout') ||
+    text.includes('os error 10060') ||
+    text.includes('os error 60') ||
+    text.includes('超时')
+  ) {
+    return '超时'
+  }
+  if (
+    text.includes('certificate') ||
+    text.includes('unknownissuer') ||
+    text.includes('webpki') ||
+    text.includes('invalid peer') ||
+    text.includes('cert verify') ||
+    text.includes('notvalid') ||
+    text.includes('unknown ca') ||
+    text.includes('self signed') ||
+    text.includes('self-signed') ||
+    text.includes('invalid certificate')
+  ) {
+    return 'TLS证书错误'
+  }
+  if (
+    text.includes('os error 10061') ||
+    text.includes('os error 10054') ||
+    text.includes('os error 61') ||
+    text.includes('os error 54') ||
+    text.includes('os error 111') ||
+    text.includes('econnrefused') ||
+    text.includes('econnreset') ||
+    text.includes('enetunreach') ||
+    text.includes('ehostunreach') ||
+    text.includes('connection refused') ||
+    text.includes('connection reset') ||
+    text.includes('actively refused') ||
+    text.includes('积极拒绝') ||
+    text.includes('强迫关闭') ||
+    text.includes('proxy') ||
+    text.includes('tunnel') ||
+    text.includes('dns') ||
+    text.includes('unreachable') ||
+    text.includes('handshake') ||
+    text.includes('connect') ||
+    text.includes('refused') ||
+    text.includes('reset') ||
+    text.includes('拒绝')
+  ) {
+    return '连不上或被拒绝'
+  }
+  return '请求失败'
+}
+
+export function classifyTransportFailure(
+  error: unknown,
+  timedOut: boolean,
+): BareFailReason {
+  if (timedOut) return '超时'
+  if (error instanceof PanelTransportError) {
+    if (error.kind === 'timeout') return '超时'
+    if (error.kind === 'tls') return 'TLS证书错误'
+    if (error.kind === 'connect') return '连不上或被拒绝'
+    return '请求失败'
+  }
+  const message = error instanceof Error ? error.message : ''
+  return classifyTransportText(message)
+}
+
 export function safePanelError(error: unknown): string {
   if (error instanceof PanelRequestError) return error.message
-  return '网络或TLS失败'
+  return classifyTransportFailure(error, false)
+}
+
+function isConnectRefusal(reason: string): boolean {
+  return bareReason(reason) === '连不上或被拒绝'
+}
+
+export function purchaseLoadMessage(
+  error: unknown,
+  connected: boolean,
+): string {
+  if (
+    connected &&
+    error instanceof PanelRequestError &&
+    error.attempts.length > 0 &&
+    error.attempts.every((item) => isConnectRefusal(item.reason))
+  ) {
+    return EXPIRED_ACCOUNT_HINT
+  }
+  return safePanelError(error)
+}
+
+export function businessPurchaseMessage(
+  message: string,
+  status: number,
+): string {
+  const text = message.trim()
+  if (text) return text
+  if (status >= 400 && status <= 599) return `HTTP ${status}`
+  return '请求失败'
 }
 
 export function browserHostStorage(): HostStorage | null {
@@ -283,10 +429,12 @@ function record(
   log: (line: string) => void,
   host: string,
   reason: PanelFailReason,
+  reasonPrefix = '',
 ): void {
-  if (!isHostnameOnly(host) || !isSafeReason(reason)) return
-  attempts.push({ host, reason })
-  log(`${host}: ${reason}`)
+  const shown = `${reasonPrefix}${reason}` as PanelFailReason
+  if (!isHostnameOnly(host) || !isSafeReason(shown)) return
+  attempts.push({ host, reason: shown })
+  log(`${host}: ${shown}`)
 }
 
 function httpReason(status: number): PanelFailReason {
@@ -303,13 +451,75 @@ function isSafeMethod(method: string | undefined): boolean {
   return normalized === 'GET' || normalized === 'HEAD'
 }
 
+type PanelHttpOutcome = {
+  status: number
+  body: string
+  errorKind?: string | null
+}
+
+function headerRecord(
+  headers: HeadersInit | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!headers) return out
+  new Headers(headers).forEach((value, key) => {
+    out[key] = value
+  })
+  return out
+}
+
+function asTransportKind(kind: string | null | undefined): TransportKind {
+  if (
+    kind === 'timeout' ||
+    kind === 'connect' ||
+    kind === 'tls' ||
+    kind === 'other'
+  ) {
+    return kind
+  }
+  return 'connect'
+}
+
 async function defaultFetch(
   url: string,
   init: PanelRequestInit,
 ): Promise<Response> {
-  const { fetch } = await import('@tauri-apps/plugin-http')
-  return fetch(url, init)
+  if (init.signal?.aborted) throw new PanelTransportError('timeout')
+  const { invoke } = await import('@tauri-apps/api/core')
+  const route: PanelRoute = init.route === 'system' ? 'system' : 'direct'
+  const outcome = await new Promise<PanelHttpOutcome>((resolve, reject) => {
+    const onAbort = () => reject(new PanelTransportError('timeout'))
+    init.signal?.addEventListener('abort', onAbort, { once: true })
+    void invoke<PanelHttpOutcome>('panel_http_fetch', {
+      request: {
+        url,
+        method: init.method ?? 'GET',
+        headers: headerRecord(init.headers),
+        body: typeof init.body === 'string' ? init.body : null,
+        route,
+        timeoutMs: init.timeoutMs ?? PANEL_HOST_TIMEOUT_MS,
+      },
+    }).then(
+      (value) => {
+        init.signal?.removeEventListener('abort', onAbort)
+        if (init.signal?.aborted) reject(new PanelTransportError('timeout'))
+        else resolve(value)
+      },
+      () => {
+        init.signal?.removeEventListener('abort', onAbort)
+        reject(new PanelTransportError('connect'))
+      },
+    )
+  })
+  if (outcome.errorKind) {
+    throw new PanelTransportError(asTransportKind(outcome.errorKind))
+  }
+  const status =
+    outcome.status >= 200 && outcome.status <= 599 ? outcome.status : 502
+  return new Response(outcome.body, { status })
 }
+
+export const panelTransportFetch: PanelFetch = defaultFetch
 
 async function requestPanelHost(
   fetchImpl: PanelFetch,
@@ -317,12 +527,14 @@ async function requestPanelHost(
   path: string,
   init: RequestInit,
   signal: AbortSignal,
+  route: PanelRoute,
 ): Promise<HostAttemptResult<Response>> {
   const res = await fetchImpl(`https://${host}${API_PREFIX}${path}`, {
     ...init,
     redirect: 'manual',
     maxRedirections: 0,
     signal,
+    route,
   })
   const text = await readBody(res, signal)
   if (!parsePanelJson(text)) {
@@ -348,6 +560,8 @@ export type RaceHostsOptions<T> = {
   log?: (line: string) => void
   /** 失败记在这里。调用方可以跨多次竞速累加，成功返回时里面只有没答话的主机。 */
   attempts?: PanelAttempt[]
+  /** 写进失败原因前面，用来区分直连和代理兜底。 */
+  reasonPrefix?: string
 }
 
 /**
@@ -365,6 +579,7 @@ export function raceHosts<T>(
   const now = options.now ?? Date.now
   const log = options.log ?? defaultLog
   const attempts = options.attempts ?? []
+  const reasonPrefix = options.reasonPrefix ?? ''
   const hosts = options.hosts.filter(
     (host, index, list) => isHostnameOnly(host) && list.indexOf(host) === index,
   )
@@ -466,17 +681,18 @@ export function raceHosts<T>(
               succeed(host, result.value, ctrl)
               return
             }
-            record(attempts, log, host, result.reason)
+            record(attempts, log, host, result.reason, reasonPrefix)
             pullForward()
           },
-          () => {
+          (error: unknown) => {
             clearTimeout(timer)
             if (settled || ctrl.signal.reason === WINNER_REASON) return
             record(
               attempts,
               log,
               host,
-              timedOut || ctrl.signal.aborted ? '超时' : '网络或TLS失败',
+              classifyTransportFailure(error, timedOut || ctrl.signal.aborted),
+              reasonPrefix,
             )
             pullForward()
           },
@@ -495,10 +711,43 @@ export function raceHosts<T>(
 // GET/HEAD 没有副作用，直接竞速真正的请求，避免慢链路上再多一个往返。
 const PROBE_PATH = '/guest/comm/config'
 
-export async function panelApiFetch(
+async function proxyRetryEnabled(deps: PanelApiDeps): Promise<boolean> {
+  try {
+    if (deps.systemProxyEnabled) return !!(await deps.systemProxyEnabled())
+    if (deps.fetchImpl) return false
+    const { invoke } = await import('@tauri-apps/api/core')
+    const proxy = await invoke<{ enable?: boolean }>('get_sys_proxy')
+    return proxy?.enable === true
+  } catch {
+    return false
+  }
+}
+
+export async function withDirectThenProxy<T>(
+  run: (route: PanelRoute) => Promise<T>,
+  deps: PanelApiDeps = {},
+): Promise<T> {
+  try {
+    return await run('direct')
+  } catch (error) {
+    if (!(error instanceof PanelRequestError)) throw error
+    if (!(await proxyRetryEnabled(deps))) throw error
+    try {
+      return await run('system')
+    } catch (fallback) {
+      if (fallback instanceof PanelRequestError) {
+        throw new PanelRequestError([...error.attempts, ...fallback.attempts])
+      }
+      throw error
+    }
+  }
+}
+
+async function panelApiFetchOnRoute(
   path: string,
   init: RequestInit = {},
   deps: PanelApiDeps = {},
+  route: PanelRoute,
 ): Promise<Response> {
   const fetchImpl = deps.fetchImpl ?? defaultFetch
   const storage =
@@ -517,11 +766,13 @@ export async function panelApiFetch(
     PANEL_HOST_STORAGE_KEY,
   )
   const hosts = orderHosts(deps.hosts ?? PANEL_API_HOSTS, preferred)
+  const reasonPrefix = route === 'system' ? '代理' : '直连'
   const raceBase = {
     hostTimeoutMs,
     staggerMs,
     now,
     log,
+    reasonPrefix,
   }
 
   const remember = (host: string) => {
@@ -539,7 +790,7 @@ export async function panelApiFetch(
       hosts,
       budgetMs,
       attempt: (host, signal) =>
-        requestPanelHost(fetchImpl, host, apiPath, requestInit, signal),
+        requestPanelHost(fetchImpl, host, apiPath, requestInit, signal, route),
     })
     remember(found.host)
     return found.value
@@ -565,6 +816,7 @@ export async function panelApiFetch(
             PROBE_PATH,
             { method: 'GET' },
             signal,
+            route,
           ),
       })
     } catch (error) {
@@ -573,7 +825,7 @@ export async function panelApiFetch(
     }
 
     if (deadline - now() <= 0) {
-      record(attempts, log, winner.host, '超时')
+      record(attempts, log, winner.host, '超时', reasonPrefix)
       break
     }
     try {
@@ -583,18 +835,42 @@ export async function panelApiFetch(
         budgetMs: deadline - now(),
         attempts,
         attempt: (host, signal) =>
-          requestPanelHost(fetchImpl, host, apiPath, requestInit, signal),
+          requestPanelHost(
+            fetchImpl,
+            host,
+            apiPath,
+            requestInit,
+            signal,
+            route,
+          ),
       })
       remember(posted.host)
       return posted.value
     } catch (error) {
       if (!(error instanceof PanelRequestError)) {
-        record(attempts, log, winner.host, '网络或TLS失败')
+        record(
+          attempts,
+          log,
+          winner.host,
+          classifyTransportFailure(error, false),
+          reasonPrefix,
+        )
       }
     }
   }
 
   throw new PanelRequestError(attempts)
+}
+
+export async function panelApiFetch(
+  path: string,
+  init: RequestInit = {},
+  deps: PanelApiDeps = {},
+): Promise<Response> {
+  return withDirectThenProxy(
+    (route) => panelApiFetchOnRoute(path, init, deps, route),
+    deps,
+  )
 }
 
 export async function resolvePanelPageUrl(
@@ -614,6 +890,7 @@ export async function resolvePanelPageUrl(
         now: deps.now,
         log: deps.log,
         hosts: PANEL_WEB_HOSTS,
+        systemProxyEnabled: deps.systemProxyEnabled,
       },
     )
   } catch {
