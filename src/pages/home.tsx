@@ -37,6 +37,12 @@ import {
   resolvePanelPageUrl,
 } from '@/services/panel-api'
 import { importPanelSubscription } from '@/services/panel-subscription'
+import {
+  DEDICATED_LINE_NOTE,
+  buildPlans,
+  pickDefaultPlan,
+  type PlanItem,
+} from '@/services/purchase-plans'
 import { fetchCacheData } from '@/services/query-client'
 import {
   REFRESH_FAIL_TEXT,
@@ -114,25 +120,6 @@ const authHeaders = (): Record<string, string> => ({
   Authorization: localStorage.getItem(AUTH_KEY) || '',
 })
 
-// 套餐周期 key -> 中文后缀（与后台 OrderSave 旧版字段一致）
-const PERIODS: [string, string][] = [
-  ['month_price', '/月'],
-  ['quarter_price', '/季'],
-  ['half_year_price', '/半年'],
-  ['year_price', '/年'],
-  ['two_year_price', '/2年'],
-  ['three_year_price', '/3年'],
-  ['onetime_price', '/永久'],
-]
-
-type PlanItem = {
-  id: number
-  name: string
-  price: number
-  period: string
-  label: string
-  orig: number | null
-}
 type PayItem = { id: number; name: string }
 
 // 支付通道单笔限额(分)：支付宝 ¥1-300，微信 ¥1-1000。超限的通道会返回"没有找到符合金额要求的支付通道"
@@ -147,28 +134,6 @@ const payMax = (name: string): number => {
 
 const yuan = (cents: number): string =>
   cents % 100 === 0 ? `¥${cents / 100}` : `¥${(cents / 100).toFixed(2)}`
-
-const buildPlans = (data: unknown[]): PlanItem[] => {
-  const out: PlanItem[] = []
-  for (const raw of data || []) {
-    const pl = raw as Record<string, unknown>
-    for (const [key, label] of PERIODS) {
-      const price = pl[key]
-      if (price != null && Number(price) > 0) {
-        const cents = Number(price)
-        out.push({
-          id: Number(pl.id),
-          name: String(pl.name ?? '套餐'),
-          price: cents,
-          period: key,
-          label,
-          orig: key === 'onetime_price' && cents === 99900 ? 199900 : null,
-        })
-      }
-    }
-  }
-  return out
-}
 
 const fmtGB = (bytes: number): string => {
   if (!bytes || bytes <= 0) return '0'
@@ -434,12 +399,7 @@ const PurchaseDialog = ({
         }
       }
       setPlans(list)
-      setSelected(
-        list.find((p) => p.period === 'year_price') ||
-          list.find((p) => p.period === 'onetime_price') ||
-          list[0] ||
-          null,
-      )
+      setSelected(pickDefaultPlan(list))
       setLoadError('')
       const mr = await panelApiFetch(`/user/order/getPaymentMethod`, {
         headers: authHeaders(),
@@ -637,6 +597,21 @@ const PurchaseDialog = ({
           </div>
         ) : (
           <>
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '10px 12px',
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                color: 'inherit',
+                fontSize: 'clamp(12px, 3.4vw, 13px)',
+                lineHeight: 1.65,
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {DEDICATED_LINE_NOTE}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {plans.map((p) => {
                 const active =
