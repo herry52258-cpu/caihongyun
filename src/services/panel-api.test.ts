@@ -111,6 +111,8 @@ describe('panel API host selection', () => {
     assert.deepEqual(
       [...PANEL_API_HOSTS],
       [
+        'api.531069.xyz',
+        '531069.xyz',
         'np1.lianjieni.com',
         'np2.lianjieni.com',
         'nlogin.lianjieni.com',
@@ -128,7 +130,7 @@ describe('panel API host selection', () => {
       [...DOWNLOAD_HOSTS],
       ['ndl.lianjieni.com', 'down.yuntanlu.com', 'dl.yuntanlu.com'],
     )
-    assert.equal(PANEL_WEB_ORIGIN, 'https://np1.lianjieni.com')
+    assert.equal(PANEL_WEB_ORIGIN, 'https://api.531069.xyz')
     assert.equal(PANEL_HOST_TIMEOUT_MS, 8_000)
     assert.equal(PANEL_HOST_STAGGER_MS, 1_500)
     assert.equal(PANEL_API_BUDGET_MS, 20_000)

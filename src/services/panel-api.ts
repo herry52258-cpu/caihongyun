@@ -3,6 +3,8 @@
 // k7m2 偶发超时，放在它们后面。旧域名国内基本不通，只做最后兜底，
 // 不记成优先入口，避免拖住首屏。总预算到点就停，给用户一句大白话。
 export const PANEL_WEB_HOSTS = [
+  'api.531069.xyz',
+  '531069.xyz',
   'np1.lianjieni.com',
   'np2.lianjieni.com',
   'nlogin.lianjieni.com',
