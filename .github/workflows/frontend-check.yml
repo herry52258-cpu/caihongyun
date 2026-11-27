@@ -76,4 +76,4 @@ jobs:
 
       - name: Run panel API tests
         if: steps.check_frontend.outputs.frontend == 'true'
-        run: pnpm test:panel-api
+        run: pnpm test:panel-api && pnpm test:purchase-plans

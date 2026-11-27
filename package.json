@@ -33,6 +33,7 @@
     "i18n:types": "node scripts/generate-i18n-keys.mjs",
     "typecheck": "tsc --noEmit",
     "test:panel-api": "node --experimental-strip-types --test src/services/panel-api.test.ts",
+    "test:purchase-plans": "node --experimental-strip-types --test src/services/purchase-plans.test.ts",
     "test:refresh-routes": "node --experimental-strip-types --test src/services/refresh-routes.test.ts"
   },
   "dependencies": {
